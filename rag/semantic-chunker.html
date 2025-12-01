@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Semantic Chunker 语义分块可视化</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        
+        /* Code Syntax Highlighting */
+        .code-container { 
+            color: #d4d4d4; 
+            font-family: 'Consolas', 'Monaco', monospace; 
+            font-size: 0.8rem; 
+            line-height: 1.6; 
+            white-space: pre; 
+        }
+        .code-line { display: block; border-left: 3px solid transparent; min-height: 1.5em; padding-right: 10px; }
+        .code-line.active { background-color: #37373d; border-left-color: #3b82f6; }
+        
+        /* Custom Scrollbar */
+        .dark-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+        .dark-scrollbar::-webkit-scrollbar-track { background: #1e1e1e; }
+        .dark-scrollbar::-webkit-scrollbar-thumb { background: #424242; border-radius: 4px; }
+        .dark-scrollbar::-webkit-scrollbar-thumb:hover { background: #4f4f4f; }
+
+        .light-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .light-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
+        .light-scrollbar::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 3px; }
+
+        /* Resizable Sidebar Logic */
+        .resizable-sidebar { width: 100%; }
+        @media (min-width: 1024px) {
+            .resizable-sidebar { width: var(--panel-width); flex-shrink: 0; }
+            .resizer {
+                width: 4px; cursor: col-resize; background-color: #e5e7eb;
+                transition: background-color 0.2s; z-index: 50; flex-shrink: 0;
+            }
+            .resizer:hover, .resizer.resizing { background-color: #3b82f6; }
+        }
+
+        /* Visualization Elements */
+        .viz-box { transition: all 0.5s ease; }
+        .viz-sentence { transition: all 0.3s; border-left: 3px solid transparent; }
+        
+        /* Dynamic Window Styling */
+        .viz-window { transition: all 0.4s ease; border-left-width: 4px; }
+        .viz-window.sim-high { border-color: #10b981; background-color: #ecfdf5; } /* Emerald-500 */
+        .viz-window.sim-low { border-color: #e11d48; background-color: #fff1f2; } /* Rose-600 */
+        
+        .sim-badge { font-size: 0.65rem; font-weight: bold; padding: 1px 4px; border-radius: 4px; margin-right: 4px; }
+        .sim-badge.high { background-color: #d1fae5; color: #065f46; border: 1px solid #34d399; }
+        .sim-badge.low { background-color: #ffe4e6; color: #9f1239; border: 1px solid #fb7185; }
+
+        /* Sliding Diagram */
+        .sent-block { transition: all 0.3s; }
+        .win-block { transition: all 0.3s; }
+
+        /* Syntax Colors */
+        .kwd { color: #569cd6; font-weight: bold; } 
+        .func { color: #dcdcaa; } 
+        .var { color: #9cdcfe; } 
+        .num { color: #b5cea8; } 
+        .str { color: #ce9178; } 
+        .comment { color: #6a9955; font-style: italic; }
+        .op { color: #d4d4d4; }
+        .cls { color: #4ec9b0; }
+
+    </style>
+</head>
+<body class="bg-gray-100 h-screen flex flex-col overflow-hidden">
+
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 h-14 flex items-center justify-between px-4 flex-shrink-0 z-20 shadow-sm">
+        <div class="flex items-center gap-3">
+            <div class="bg-indigo-600 text-white p-1.5 rounded-md shadow-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+            </div>
+            <h1 class="text-base font-bold text-gray-800 tracking-tight">Semantic Chunker 语义分块</h1>
+            <!-- GitHub Repo stars -->
+            <a
+              href="https://github.com/vsme/ai-viz"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <img
+                src="//img.shields.io/github/stars/vsme/ai-viz"
+                alt="GitHub Repo stars"
+              />
+            </a>
+        </div>
+        <div class="flex gap-2">
+            <div class="text-xs font-semibold text-indigo-700 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
+                Window Size: <span id="header-ws">2</span>
+            </div>
+            <div class="text-xs font-semibold text-rose-700 bg-rose-50 px-3 py-1 rounded-full border border-rose-100">
+                Threshold: <span id="header-th">0.85</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Layout -->
+    <div class="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+        
+        <!-- 1. LEFT PANEL: CODE -->
+        <aside id="left-panel" class="resizable-sidebar bg-[#1e1e1e] border-r border-gray-700 flex flex-col z-10 order-3 lg:order-1 h-1/3 lg:h-auto" style="--panel-width: 380px;">
+            <div class="h-9 border-b border-[#2d2d2d] bg-[#252526] flex items-center justify-between px-4 flex-shrink-0">
+                <span class="text-[11px] font-bold text-gray-400 uppercase tracking-wider">semantic_chunker.py</span>
+            </div>
+            <div class="flex-1 overflow-y-auto dark-scrollbar p-2 code-container" id="code-display">
+                <!-- Code injected via JS -->
+            </div>
+        </aside>
+
+        <div id="resizer-left" class="hidden lg:block resizer order-1"></div>
+
+        <!-- 2. MIDDLE PANEL: VISUALIZATION -->
+        <main class="flex-1 bg-slate-50 flex flex-col p-0 overflow-hidden relative order-1 lg:order-2 h-1/3 lg:h-auto">
+            
+            <!-- Top: Visual Flow Area -->
+            <div class="flex-1 overflow-y-auto light-scrollbar p-6 space-y-6" id="viz-container">
+                
+                <!-- Step 0: Input Text (Editable) -->
+                <div id="viz-step-0" class="viz-box">
+                    <h3 class="text-xs font-bold text-indigo-600 uppercase mb-2 flex items-center gap-2">
+                        <span>0. 待处理文本 (Raw Text)</span>
+                        <span class="text-[9px] bg-indigo-50 text-indigo-400 px-1 rounded border border-indigo-100 font-normal">可编辑 (Editable)</span>
+                    </h3>
+                    <textarea id="raw-text-input" class="w-full h-28 p-3 text-sm text-gray-700 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white resize-y font-mono leading-relaxed" placeholder="在此输入需要分块的文本..."></textarea>
+                    <p class="text-[10px] text-gray-400 mt-1 text-right">尝试修改文本内容，然后点击"下一步"</p>
+                </div>
+
+                <!-- Step 1: Sentences + Diagram -->
+                <div id="viz-step-1" class="viz-box opacity-50 hidden">
+                    <h3 class="text-xs font-bold text-gray-400 uppercase mb-2">1. 正则分句结果 (Splitted Sentences)</h3>
+                    <div class="grid gap-2" id="viz-sentences-list"></div>
+
+                    <!-- Diagram MOVED HERE inside Step 1 -->
+                    <div id="grouping-diagram-container" class="mt-4 pt-4 border-t border-gray-200 hidden">
+                         <div class="flex justify-between items-center mb-2">
+                            <div class="text-[10px] text-indigo-400 uppercase font-bold">窗口划分示意图 (Grouping Logic)</div>
+                            <div class="text-[9px] bg-gray-100 px-2 py-0.5 rounded text-gray-500">Stride = Window Size (无重叠)</div>
+                        </div>
+                        <div class="flex flex-wrap gap-3 items-start p-3 bg-slate-50 rounded border border-dashed border-indigo-200 min-h-[60px]" id="window-sliding-diagram">
+                            <!-- Injected via JS -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Window Area -->
+                <div id="viz-step-2" class="viz-box opacity-50 hidden">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-xs font-bold text-gray-400 uppercase">2. 构建上下文窗口 (Windows)</h3>
+                        <div id="window-legend" class="hidden opacity-0 transition-opacity duration-500 flex gap-3 text-[10px]">
+                            <div class="flex items-center gap-1"><span class="w-2 h-2 bg-emerald-500 rounded-full"></span> 语义连贯</div>
+                            <div class="flex items-center gap-1"><span class="w-2 h-2 bg-rose-500 rounded-full"></span> 语义断裂(切分点)</div>
+                        </div>
+                    </div>
+
+                    <!-- Window List -->
+                    <div class="flex flex-col gap-2" id="viz-windows-list"></div>
+                </div>
+
+                <!-- Step 4: Results Area -->
+                <div id="viz-step-4" class="viz-box opacity-50 hidden">
+                    <h3 class="text-xs font-bold text-gray-400 uppercase mb-2">4. 最终分块结果 (Final Chunks)</h3>
+                    <div class="space-y-3" id="viz-results-list"></div>
+                </div>
+            </div>
+
+            <!-- Bottom: Similarity Chart (Fixed at bottom) -->
+            <div class="h-64 bg-white border-t border-gray-200 flex-shrink-0 p-4 flex flex-col shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10 transition-transform duration-300 transform translate-y-full" id="chart-panel">
+                <div class="flex justify-between items-center mb-1">
+                    <h3 class="text-xs font-bold text-indigo-600 uppercase">3. 语义相似度曲线 (Cosine Similarity)</h3>
+                    <div class="flex gap-4 text-[10px]">
+                        <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-indigo-500"></span> 相似度</div>
+                        <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-rose-500"></span> 阈值线</div>
+                    </div>
+                </div>
+                <div class="relative flex-1 w-full h-full">
+                    <canvas id="similarityChart"></canvas>
+                </div>
+            </div>
+
+        </main>
+
+        <div id="resizer-right" class="hidden lg:block resizer order-2"></div>
+
+        <!-- 3. RIGHT PANEL: CONTROLS -->
+        <aside id="right-panel" class="resizable-sidebar bg-white border-l border-gray-200 flex flex-col shadow-[-2px_0_10px_rgba(0,0,0,0.02)] z-10 order-2 lg:order-3 h-1/3 lg:h-auto" style="--panel-width: 320px;">
+            
+            <div class="flex-1 overflow-y-auto light-scrollbar p-5 space-y-6">
+                
+                <!-- Status -->
+                <div class="relative pl-3 border-l-2 border-indigo-500" id="status-container">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span id="step-badge" class="bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase">Step 0</span>
+                    </div>
+                    <h2 id="step-title" class="text-lg font-bold text-gray-800">文本准备</h2>
+                    <p id="step-desc" class="text-sm text-gray-600 mt-2 leading-relaxed">
+                        请在中间面板编辑待处理的文本，然后点击下一步开始。
+                    </p>
+                </div>
+
+                <!-- Parameters -->
+                <div class="bg-gray-50 p-4 rounded-lg border border-gray-100 space-y-4">
+                    <h3 class="text-[11px] font-bold text-gray-400 uppercase tracking-wider">参数设置</h3>
+                    
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-700">窗口大小 (Window Size)</span>
+                            <span class="font-mono font-bold text-indigo-600" id="val-ws">2</span>
+                        </div>
+                        <input type="range" id="input-ws" min="1" max="5" value="2" class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600">
+                        <p class="text-[10px] text-gray-400 mt-1">每个窗口聚合的句子数量</p>
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-700">相似度阈值 (Threshold)</span>
+                            <span class="font-mono font-bold text-rose-600" id="val-th">0.85</span>
+                        </div>
+                        <input type="range" id="input-th" min="0.1" max="0.95" step="0.05" value="0.85" class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-rose-600">
+                        <p class="text-[10px] text-gray-400 mt-1">低于此值则切分（值越大切分越细）</p>
+                    </div>
+                </div>
+
+                <!-- Insight Box -->
+                <div id="insight-box" class="hidden bg-amber-50 border border-amber-100 rounded-md p-3 text-sm text-amber-900">
+                    <div class="flex items-center gap-1.5 mb-1 text-amber-700 font-bold text-[11px] uppercase">
+                        💡 核心原理
+                    </div>
+                    <span id="insight-text" class="leading-relaxed block opacity-90 text-xs"></span>
+                </div>
+
+            </div>
+
+            <!-- Footer Buttons -->
+            <div class="p-4 border-t border-gray-100 bg-gray-50/50 grid grid-cols-3 gap-2 flex-shrink-0">
+                <button id="btn-reset" class="col-span-1 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 rounded-md font-medium text-sm transition">
+                    重置
+                </button>
+                <button id="btn-next" class="col-span-2 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-sm font-medium text-sm transition flex items-center justify-center gap-2">
+                    下一步
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+                </button>
+            </div>
+        </aside>
+
+    </div>
+
+    <script>
+        // --- 1. CONFIG & STATE ---
+        const defaultText = `今天天气晴朗。今天天气晴朗。今天天气晴朗。
+Windows操作系统。Windows操作系统。Windows操作系统。
+数学1+1=2。数学1+1=2。数学1+1=2。`;
+
+        let state = {
+            step: 0, // 0:Init, 1:Split, 2:Window, 3:Sim/Graph, 4:Result
+            windowSize: 2,
+            threshold: 0.85,
+            rawText: defaultText,
+            sentences: [],
+            windows: [],
+            similarities: [],
+            chunks: []
+        };
+
+        let chartInstance = null;
+
+        // --- 2. LOGIC (Mock Backend) ---
+        
+        // Mock Logic: Calculates pseudo-embeddings based on keyword presence
+        function getMockVector(text) {
+            // Simplified hashing to vector space
+            const keywords = [
+                { word: '天气', vec: [0.9, 0.1, 0.1] },
+                { word: '晴朗', vec: [0.9, 0.2, 0.0] },
+                { word: 'Windows', vec: [0.1, 0.9, 0.1] },
+                { word: '操作系统', vec: [0.1, 0.95, 0.2] },
+                { word: '系统', vec: [0.1, 0.8, 0.1] },
+                { word: '数学', vec: [0.1, 0.1, 0.9] },
+                { word: '1+1', vec: [0.0, 0.0, 0.95] },
+                { word: '2', vec: [0.0, 0.0, 0.9] }
+            ];
+
+            // Default vector (random noise)
+            let vec = [Math.random()*0.3, Math.random()*0.3, Math.random()*0.3];
+            let matchCount = 0;
+
+            keywords.forEach(kw => {
+                if(text.includes(kw.word)) {
+                    vec[0] += kw.vec[0];
+                    vec[1] += kw.vec[1];
+                    vec[2] += kw.vec[2];
+                    matchCount++;
+                }
+            });
+
+            if(matchCount > 0) {
+                vec = vec.map(v => v / (matchCount + 0.5)); // Normalize roughly
+            }
+            return vec;
+        }
+
+        // Cosine Similarity
+        function cosineSim(v1, v2) {
+            const dot = v1[0]*v2[0] + v1[1]*v2[1] + v1[2]*v2[2];
+            const mag1 = Math.sqrt(v1[0]*v1[0] + v1[1]*v1[1] + v1[2]*v1[2]);
+            const mag2 = Math.sqrt(v2[0]*v2[0] + v2[1]*v2[1] + v2[2]*v2[2]);
+            if(mag1 === 0 || mag2 === 0) return 0;
+            let sim = dot / (mag1 * mag2);
+            // Add slight jitter to make identical text not look like an error
+            sim = sim * 0.99 + (Math.random() * 0.01);
+            return Math.min(1.0, Math.max(0, sim));
+        }
+
+        function processData() {
+            // 1. Split
+            const textToProcess = document.getElementById('raw-text-input').value;
+            const parts = textToProcess.split(/([。！？!?.\n])/);
+            let sents = [];
+            for (let i = 0; i < parts.length - 1; i += 2) {
+                let s = (parts[i] + (parts[i+1] || "")).trim();
+                if (s) sents.push(s);
+            }
+            // Fallback for no punctuation
+            if (sents.length === 0 && textToProcess.trim()) sents = [textToProcess];
+            state.sentences = sents;
+
+            // 2. Windows
+            let wins = [];
+            let start = 0;
+            while(start < sents.length) {
+                let end = Math.min(start + state.windowSize, sents.length);
+                let txt = sents.slice(start, end).join("");
+                wins.push({ id: wins.length, text: txt, range: [start, end], vector: getMockVector(txt) });
+                start = end; 
+            }
+            state.windows = wins;
+
+            // 3. Similarities
+            let sims = [];
+            let splitPoints = [0];
+            
+            for(let i=1; i<wins.length; i++) {
+                const s = cosineSim(wins[i-1].vector, wins[i].vector);
+                const isSplit = s < state.threshold;
+                if(isSplit) splitPoints.push(i);
+                sims.push({ idx: i, score: s, isSplit });
+            }
+            state.similarities = sims;
+
+            // 4. Chunks
+            let chunks = [];
+            for(let i=0; i<splitPoints.length; i++) {
+                let sIdx = splitPoints[i];
+                let eIdx = (i+1 < splitPoints.length) ? splitPoints[i+1] : wins.length;
+                let chunkTxt = wins.slice(sIdx, eIdx).map(w => w.text).join("");
+                if(chunkTxt) chunks.push(chunkTxt);
+            }
+            state.chunks = chunks;
+        }
+
+        // --- 3. UI RENDERING ---
+
+        const codeLines = [
+            { id: 'class', html: '<span class="kwd">class</span> <span class="cls">SemanticChunker</span>:', indent: 0 },
+            { id: 'init', html: '    <span class="kwd">def</span> <span class="func">__init__</span>(<span class="var">self</span>, <span class="var">window_size</span>, <span class="var">threshold</span>): ...', indent: 0 },
+            { id: 'def', html: '    <span class="kwd">def</span> <span class="func">create_documents</span>(<span class="var">self</span>, <span class="var">text</span>):', indent: 0 },
+            { id: 'split', html: '        <span class="comment"># 1. 按标点符号分割句子</span><br>        sentences = re.<span class="func">split</span>(<span class="str">r"(。|！|...)"</span>, text)', indent: 2 },
+            { id: 'win_loop', html: '        <span class="comment"># 2. 组合窗口 (Stride=WindowSize)</span><br>        <span class="kwd">while</span> start < <span class="func">len</span>(sents):', indent: 2 },
+            { id: 'win_make', html: '            window = sents[start : start + window_size]', indent: 3 },
+            { id: 'embed', html: '        <span class="comment"># 3. 计算Embedding与相似度</span><br>        embeddings = model.<span class="func">encode</span>(windows)', indent: 2 },
+            { id: 'sim_calc', html: '        sim = np.<span class="func">dot</span>(emb[i-1], emb[i]) / ...', indent: 3 },
+            { id: 'thresh', html: '        <span class="kwd">if</span> sim < self.threshold: split_points.<span class="func">append</span>(i)', indent: 3 },
+            { id: 'merge', html: '        <span class="comment"># 4. 根据切分点生成最终Chunks</span><br>        <span class="kwd">return</span> [<span class="str">""</span>.<span class="func">join</span>(windows[s:e]) <span class="kwd">for</span> s,e <span class="kwd">in</span> points]', indent: 2 },
+        ];
+
+        function renderCode(step) {
+            const elCode = document.getElementById('code-display');
+            let active = [];
+            if(step === 1) active = ['split'];
+            if(step === 2) active = ['win_loop', 'win_make'];
+            if(step === 3) active = ['embed', 'sim_calc', 'thresh'];
+            if(step === 4) active = ['merge'];
+
+            let html = codeLines.map(line => {
+                const isActive = active.includes(line.id);
+                const cls = isActive ? 'active' : 'opacity-60';
+                return `<div class="code-line ${cls}" style="padding-left:${line.indent}rem">${line.html}</div>`;
+            }).join('');
+            elCode.innerHTML = html;
+        }
+
+        function renderViz() {
+            document.getElementById('header-ws').innerText = state.windowSize;
+            document.getElementById('header-th').innerText = state.threshold;
+
+            const c0 = document.getElementById('viz-step-0');
+            const c1 = document.getElementById('viz-step-1');
+            const c2 = document.getElementById('viz-step-2');
+            const c4 = document.getElementById('viz-step-4');
+            const chartPanel = document.getElementById('chart-panel');
+            const winLegend = document.getElementById('window-legend');
+            const diagContainer = document.getElementById('grouping-diagram-container');
+            const diagram = document.getElementById('window-sliding-diagram');
+
+            // --- STEP 0: Input ---
+            if(state.step > 0) {
+                c0.classList.add('hidden');
+            } else {
+                c0.classList.remove('hidden');
+            }
+
+            // --- STEP 1: Sentences & Diagram ---
+            if(state.step >= 1) {
+                c1.classList.remove('hidden');
+                c1.classList.toggle('opacity-50', state.step !== 1 && state.step !== 2); // Less opacity drop in step 2
+                c1.classList.toggle('opacity-100', state.step === 1 || state.step === 2);
+                
+                // Sentences List
+                if(state.step === 1 || document.getElementById('viz-sentences-list').innerHTML === '') {
+                    const list = document.getElementById('viz-sentences-list');
+                    list.innerHTML = state.sentences.map((s, i) => `
+                        <div class="bg-white border border-gray-200 p-2 rounded text-xs text-gray-600 flex gap-2 items-center">
+                            <span class="bg-gray-100 text-gray-500 w-5 h-5 flex items-center justify-center rounded-full text-[10px] flex-shrink-0">${i}</span>
+                            <span class="truncate">${s}</span>
+                        </div>
+                    `).join('');
+                }
+
+                // Diagram Logic (Shows in Step 2+)
+                if (state.step >= 2) {
+                    diagContainer.classList.remove('hidden');
+                    diagram.innerHTML = state.windows.map(w => {
+                        const sentBlocks = [];
+                        for(let k=w.range[0]; k<w.range[1]; k++) {
+                            sentBlocks.push(`<span class="inline-block bg-white border border-gray-300 px-1 rounded text-[9px] text-gray-500">Sent ${k}</span>`);
+                        }
+                        return `
+                            <div class="win-block flex flex-col items-center gap-1 p-1 bg-indigo-50 border border-indigo-200 rounded">
+                                <span class="text-[9px] font-bold text-indigo-600">Window ${w.id}</span>
+                                <div class="flex gap-1">${sentBlocks.join('')}</div>
+                            </div>
+                        `;
+                    }).join('<div class="text-gray-300 text-xs self-center">➔</div>');
+                } else {
+                    diagContainer.classList.add('hidden');
+                }
+
+            } else {
+                c1.classList.add('hidden');
+            }
+
+            // --- STEP 2 & 3: Windows ---
+            if(state.step >= 2) {
+                c2.classList.remove('hidden');
+                c2.classList.toggle('opacity-50', state.step !== 2 && state.step !== 3);
+                c2.classList.toggle('opacity-100', state.step === 2 || state.step === 3);
+
+                const list = document.getElementById('viz-windows-list');
+                
+                // Show legend only in step 3
+                if (state.step === 3) {
+                    winLegend.classList.remove('hidden', 'opacity-0');
+                    winLegend.classList.add('opacity-100');
+                } else {
+                    winLegend.classList.add('hidden', 'opacity-0');
+                }
+
+                // Render Window Cards
+                const isSimMode = state.step >= 3;
+                list.innerHTML = state.windows.map((w, i) => {
+                    let styleClass = "bg-indigo-50 border-indigo-200";
+                    let simBadge = "";
+                    let splitIndicator = "";
+
+                    // Calculate visual style based on similarity (only for i > 0)
+                    if (isSimMode && i > 0) {
+                        const simData = state.similarities.find(s => s.idx === i);
+                        if (simData) {
+                            if (simData.isSplit) {
+                                styleClass = "sim-low"; // Red
+                                simBadge = `<span class="sim-badge low">Sim: ${simData.score.toFixed(2)}</span>`;
+                                splitIndicator = `<div class="flex justify-center items-center py-1"><div class="h-px bg-red-300 w-full"></div><span class="text-[9px] text-red-500 font-bold px-2 bg-slate-50 border border-red-200 rounded uppercase">Cut</span><div class="h-px bg-red-300 w-full"></div></div>`;
+                            } else {
+                                styleClass = "sim-high"; // Green
+                                simBadge = `<span class="sim-badge high">Sim: ${simData.score.toFixed(2)}</span>`;
+                            }
+                        }
+                    }
+
+                    if (i === 0 && isSimMode) {
+                        simBadge = `<span class="text-[9px] text-gray-400 mr-2">Start</span>`;
+                    }
+
+                    const cardHtml = `
+                        <div class="viz-window ${styleClass} border border-l-4 p-2 rounded text-xs w-full relative overflow-hidden group">
+                            <div class="flex justify-between items-start mb-1">
+                                <span class="bg-indigo-100 text-indigo-800 text-[9px] px-1.5 py-0.5 rounded font-bold">W${w.id}</span>
+                                ${simBadge}
+                            </div>
+                            <div class="text-gray-800 leading-snug mb-1">${w.text}</div>
+                            <div class="text-[9px] text-gray-400">包含句子: ${w.range[0]} - ${w.range[1]}</div>
+                        </div>
+                    `;
+
+                    return (splitIndicator && isSimMode ? splitIndicator : '') + cardHtml;
+                }).join('');
+                
+            } else {
+                c2.classList.add('hidden');
+            }
+
+            // --- STEP 3 Chart ---
+            if(state.step >= 3) {
+                chartPanel.classList.remove('translate-y-full');
+                renderChart();
+            } else {
+                chartPanel.classList.add('translate-y-full');
+            }
+
+            // --- STEP 4 Results ---
+            if(state.step >= 4) {
+                c4.classList.remove('hidden', 'opacity-50');
+                c4.classList.add('opacity-100');
+                
+                const list = document.getElementById('viz-results-list');
+                list.innerHTML = state.chunks.map((c, i) => `
+                    <div class="bg-emerald-50 border border-emerald-200 p-3 rounded-md relative shadow-sm">
+                        <div class="absolute -left-1 top-3 w-1 h-6 bg-emerald-500 rounded-r"></div>
+                        <div class="text-[10px] font-bold text-emerald-600 uppercase mb-1">Chunk ${i+1}</div>
+                        <div class="text-sm text-emerald-900 leading-relaxed">${c}</div>
+                    </div>
+                `).join('');
+            } else {
+                c4.classList.add('hidden');
+            }
+        }
+
+        function renderChart() {
+            const ctx = document.getElementById('similarityChart').getContext('2d');
+            const labels = state.similarities.map(s => `W${s.idx-1}→W${s.idx}`);
+            const data = state.similarities.map(s => s.score);
+            const pointColors = state.similarities.map(s => s.isSplit ? '#e11d48' : '#10b981'); // Red or Green
+
+            if(chartInstance) chartInstance.destroy();
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Cosine Similarity',
+                            data: data,
+                            borderColor: '#6366f1',
+                            backgroundColor: 'rgba(99, 102, 241, 0.05)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: true,
+                            pointBackgroundColor: pointColors,
+                            pointBorderColor: '#fff',
+                            pointHoverRadius: 6,
+                            pointRadius: 5
+                        },
+                        {
+                            label: 'Threshold',
+                            data: Array(labels.length).fill(state.threshold),
+                            borderColor: '#e11d48',
+                            borderWidth: 1.5,
+                            borderDash: [6, 4],
+                            pointRadius: 0,
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true, max: 1.1, grid: { color: '#f3f4f6' } },
+                        x: { grid: { display: false } }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (ctx) => `相似度: ${ctx.raw.toFixed(3)} ${ctx.raw < state.threshold ? '(切分)' : ''}`
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateSidePanel() {
+            const badge = document.getElementById('step-badge');
+            const title = document.getElementById('step-title');
+            const desc = document.getElementById('step-desc');
+            const btn = document.getElementById('btn-next');
+            const insightBox = document.getElementById('insight-box');
+            const insightText = document.getElementById('insight-text');
+
+            insightBox.classList.add('hidden');
+
+            switch(state.step) {
+                case 0:
+                    badge.innerText = "Step 0"; badge.className = "bg-gray-100 text-gray-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase";
+                    title.innerText = "文本准备";
+                    desc.innerText = "你可以编辑中间的文本，测试不同的分块效果。比如尝试混合两段完全不相关的话题。";
+                    btn.innerHTML = "下一步：分割句子";
+                    btn.disabled = false;
+                    break;
+                case 1:
+                    badge.innerText = "Step 1"; badge.className = "bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase";
+                    title.innerText = "句子分割";
+                    desc.innerHTML = "首先使用标点符号（如 。！？\\n）将文本打散成最小单元。";
+                    btn.innerHTML = "下一步：构建窗口";
+                    insightBox.classList.remove('hidden');
+                    insightText.innerHTML = "<b>为什么要做这一步？</b><br>直接处理整段文本粒度太粗，处理单词粒度太细。句子是包含完整语义的最小单位。";
+                    break;
+                case 2:
+                    badge.innerText = "Step 2"; badge.className = "bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase";
+                    title.innerText = "构建上下文窗口";
+                    desc.innerHTML = `当前 Window Size = <b>${state.windowSize}</b>。<br>我们将每 ${state.windowSize} 个句子打包成一个“窗口”。`;
+                    btn.innerHTML = "下一步：计算相似度";
+                    insightBox.classList.remove('hidden');
+                    insightText.innerHTML = "<b>窗口划分示意图：</b><br>请查看 Step 1 下方新增的示意图。由于步长等于窗口大小，这里的窗口是<b>不重叠</b>的（Tumbling Window）。";
+                    break;
+                case 3:
+                    badge.innerText = "Step 3"; badge.className = "bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase";
+                    title.innerText = "计算语义相似度";
+                    desc.innerHTML = "这是核心步骤。<br><span class='text-emerald-600 font-bold'>绿色边框</span> = 相似度高，保持合并。<br><span class='text-rose-600 font-bold'>红色边框</span> = 相似度低，触发切分。";
+                    btn.innerHTML = "下一步：生成结果";
+                    insightBox.classList.remove('hidden');
+                    insightText.innerHTML = "<b>Embedding 原理：</b><br>模型将每个窗口转换成向量（一串数字）。<br><b>Cosine Similarity：</b><br>计算两个向量夹角的余弦值。接近 1 代表语义非常接近，接近 0 代表完全无关。";
+                    break;
+                case 4:
+                    badge.innerText = "完成"; badge.className = "bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase";
+                    title.innerText = "分块完成";
+                    desc.innerHTML = `最终生成了 <b>${state.chunks.length}</b> 个语义块 (Chunks)。<br>这些块将被送入向量数据库供 RAG 使用。`;
+                    btn.innerHTML = "重新开始";
+                    btn.disabled = false;
+                    break;
+            }
+        }
+
+        // --- 4. CONTROLLERS ---
+
+        function nextStep() {
+            if(state.step < 4) {
+                state.step++;
+                // If moving to step 1, we must read text
+                if(state.step === 1) processData(); 
+                
+                renderCode(state.step);
+                renderViz();
+                updateSidePanel();
+                
+                if(state.step > 0) {
+                    const vizC = document.getElementById('viz-container');
+                    setTimeout(() => vizC.scrollTo({ top: vizC.scrollHeight, behavior: 'smooth' }), 100);
+                }
+            } else if (state.step === 4) {
+                reset(); // Loop back
+            }
+        }
+
+        function reset() {
+            state.step = 0;
+            renderCode(0);
+            renderViz();
+            updateSidePanel();
+            document.getElementById('viz-container').scrollTo(0,0);
+        }
+
+        document.getElementById('btn-next').addEventListener('click', nextStep);
+        document.getElementById('btn-reset').addEventListener('click', reset);
+        document.getElementById('raw-text-input').value = defaultText; // Init text
+
+        ['input-ws', 'input-th'].forEach(id => {
+            document.getElementById(id).addEventListener('input', (e) => {
+                const val = e.target.value;
+                if(id === 'input-ws') {
+                    state.windowSize = parseInt(val);
+                    document.getElementById('val-ws').innerText = val;
+                } else {
+                    state.threshold = parseFloat(val);
+                    document.getElementById('val-th').innerText = val;
+                }
+                
+                if(state.step >= 1) {
+                    processData();
+                    // 修复：在 Step 2 及以上步骤时，参数变化应立即触发视图和侧边栏更新
+                    if(state.step >= 2) {
+                        renderViz();
+                        updateSidePanel();
+                    }
+                }
+            });
+        });
+
+        // Resize Logic
+        const makeResizable = (resizerId, panelId, isLeft) => {
+            const resizer = document.getElementById(resizerId);
+            const panel = document.getElementById(panelId);
+            if (!resizer || !panel) return;
+            resizer.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                document.body.style.cursor = 'col-resize';
+                const startX = e.clientX;
+                const startWidth = parseInt(window.getComputedStyle(panel).width, 10);
+                const onMouseMove = (ev) => {
+                    let newWidth = isLeft ? startWidth + (ev.clientX - startX) : startWidth - (ev.clientX - startX);
+                    if(newWidth < 200) newWidth = 200; if(newWidth > 600) newWidth = 600;
+                    panel.style.setProperty('--panel-width', `${newWidth}px`);
+                };
+                const onMouseUp = () => {
+                    document.body.style.cursor = '';
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                };
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+        };
+        makeResizable('resizer-left', 'left-panel', true);
+        makeResizable('resizer-right', 'right-panel', false);
+
+        // Init
+        renderCode(0);
+        updateSidePanel();
+
+    </script>
+</body>
+</html>
