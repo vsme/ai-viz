@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- order: 6 -->
     <!-- icon: 🔎 -->
-    <title>NSW 核心原理</title>
+    <title>HNSW (NSW) 可导航小世界图</title>
     <meta name="description" content="可视化展示 NSW 算法的核心原理，帮助理解高维向量的索引构建和查询过程。">  
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -82,7 +82,7 @@
                 <i data-lucide="network" class="w-5 h-5"></i>
             </div>
             <div>
-                <h1 class="text-lg font-bold text-slate-800 leading-none">NSW 算法可视化</h1>
+                <h1 class="text-lg font-bold text-slate-800 leading-none">HNSW (NSW) 算法可视化</h1>
                 <div class="text-[10px] text-slate-500 mt-0.5">增量建图 (Add) 与 贪心搜索 (Search)</div>
             </div>
         </div>
@@ -218,6 +218,11 @@
                         <button id="btn-mode-search" class="flex-1 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors">
                             <i data-lucide="search" class="w-3 h-3 inline mr-1"></i> 搜索
                         </button>
+                    </div>
+                    <!-- NEW: Mode Instruction -->
+                    <div id="mode-instruction" class="mt-2 p-2 bg-slate-100 border border-slate-200 rounded text-[10px] text-slate-600 leading-tight flex items-start gap-1.5">
+                        <i data-lucide="info" class="w-3 h-3 flex-shrink-0 mt-0.5 text-slate-400"></i>
+                        <span id="mode-instruction-text">在画布空白处 <b>点击</b> 以添加新节点。</span>
                     </div>
                 </div>
 
@@ -556,10 +561,15 @@
             STATE.queryPoint = null; STATE.activeBuildNode = null; STATE.activeSearchNode = null; STATE.visited.clear(); STATE.tempLines = []; STATE.highlightNodes = []; STATE.highlightNeighbors = []; STATE.isWaitingConfirm = false; resetExecution();
             STATE.mode = mode;
             const btnBuild = document.getElementById('btn-mode-build'); const btnSearch = document.getElementById('btn-mode-search'); const label = document.getElementById('code-mode-label');
+            const descText = document.getElementById('mode-instruction-text');
             if (mode === 'BUILD') {
-                btnBuild.className = "flex-1 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 transition-colors"; btnSearch.className = "flex-1 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors"; label.innerText = "建图模式"; document.getElementById('code-group-build').classList.remove('hidden'); document.getElementById('code-group-search').classList.add('hidden'); document.getElementById('list-1-title').innerHTML = '<i data-lucide="list-ordered" class="w-3 h-3"></i> Frontier';
+                btnBuild.className = "flex-1 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 transition-colors"; btnSearch.className = "flex-1 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors"; label.innerText = "建图模式"; 
+                descText.innerHTML = "在画布空白处 <b>点击</b> 以添加新节点。";
+                document.getElementById('code-group-build').classList.remove('hidden'); document.getElementById('code-group-search').classList.add('hidden'); document.getElementById('list-1-title').innerHTML = '<i data-lucide="list-ordered" class="w-3 h-3"></i> Frontier';
             } else {
-                btnSearch.className = "flex-1 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 transition-colors"; btnBuild.className = "flex-1 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors"; label.innerText = "搜索模式"; document.getElementById('code-group-search').classList.remove('hidden'); document.getElementById('code-group-build').classList.add('hidden'); document.getElementById('list-1-title').innerHTML = '<i data-lucide="list-ordered" class="w-3 h-3"></i> Frontier';
+                btnSearch.className = "flex-1 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 transition-colors"; btnBuild.className = "flex-1 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors"; label.innerText = "搜索模式";
+                descText.innerHTML = "在画布空白处 <b>点击</b> 以设定查询点 (红色目标)。";
+                document.getElementById('code-group-search').classList.remove('hidden'); document.getElementById('code-group-build').classList.add('hidden'); document.getElementById('list-1-title').innerHTML = '<i data-lucide="list-ordered" class="w-3 h-3"></i> Frontier';
             }
             lucide.createIcons(); draw();
         }
