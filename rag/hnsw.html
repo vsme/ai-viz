@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- order: 7 -->
+    <!-- icon: 🏛️ -->
+    <title>HNSW 3D 分层可导航小世界图</title>
+    <meta name="description" content="使用 Three.js 可视化展示 HNSW 算法的分层结构、增量建图和贪心搜索过程。">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f8fafc; margin: 0; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        #three-container { background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%); }
+        .code-line { padding-left: 1rem; border-left: 3px solid transparent; opacity: 0.6; transition: all 0.1s; white-space: pre; }
+        .code-active { background-color: #334155; border-left-color: #f59e0b; color: #fff; opacity: 1; font-weight: bold; }
+        .fade-enter { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        .resizer-v { width: 4px; background-color: #cbd5e1; cursor: col-resize; transition: background-color 0.2s; z-index: 50; flex-shrink: 0; }
+        .resizer-v:hover, .resizer-v.resizing { background-color: #3b82f6; }
+        .resizer-h { height: 4px; background-color: #cbd5e1; cursor: row-resize; transition: background-color 0.2s; z-index: 50; flex-shrink: 0; width: 100%; }
+        .resizer-h:hover, .resizer-h.resizing { background-color: #3b82f6; }
+        .layer-indicator { position: absolute; left: 10px; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; pointer-events: none; }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden text-slate-800">
+    <!-- Header -->
+    <header class="bg-white border-b border-slate-200 h-14 flex items-center justify-between px-6 flex-shrink-0 z-20 shadow-sm">
+        <div class="flex items-center gap-3">
+            <a href="/" class="flex items-center gap-3 hover:opacity-80 transition-opacity">
+                <div class="bg-purple-600 p-1.5 rounded text-white"><i data-lucide="layers" class="w-5 h-5"></i></div>
+                <div>
+                    <h1 class="text-lg font-bold text-slate-800 leading-none">HNSW 3D 算法可视化</h1>
+                    <div class="text-[10px] text-slate-500 mt-0.5">分层可导航小世界图 - 增量建图 & 贪心搜索</div>
+                </div>
+            </a>
+        </div>
+        <div class="flex items-center gap-4 text-xs text-slate-500">
+            <div class="flex items-center gap-1"><i data-lucide="mouse" class="w-3 h-3"></i><span>拖拽旋转</span></div>
+            <div class="flex items-center gap-1"><i data-lucide="zoom-in" class="w-3 h-3"></i><span>滚轮缩放</span></div>
+            <div class="flex items-center gap-1"><i data-lucide="move" class="w-3 h-3"></i><span>右键平移</span></div>
+        </div>
+    </header>
+
+    <div class="flex-1 flex overflow-hidden" id="main-container">
+        <!-- LEFT: Code Panel -->
+        <aside id="left-panel" class="bg-[#1e293b] flex flex-col border-r border-slate-700 z-10 shadow-lg text-slate-300" style="width: 420px; min-width: 280px;">
+            <div class="px-4 py-3 border-b border-slate-700 bg-[#0f172a] flex justify-between items-center flex-shrink-0">
+                <h2 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                    <i data-lucide="code" class="w-3 h-3"></i> 核心代码逻辑
+                </h2>
+                <span id="code-mode-label" class="text-[10px] px-2 py-0.5 rounded bg-blue-900 text-blue-200 border border-blue-700">建图模式</span>
+            </div>
+            <div class="flex-1 overflow-auto py-4 mono text-[11px] leading-relaxed custom-scrollbar relative" id="code-area">
+                <!-- Code: Add Items -->
+                <div id="code-group-build">
+                    <div id="ln-add-def" class="code-line"><span class="text-pink-400">def</span> <span class="text-blue-300">add_item</span>(self, vec):</div>
+                    <div id="ln-add-level" class="code-line pl-4">level = random_level() <span class="text-slate-500"># 随机层级</span></div>
+                    <div id="ln-add-entry" class="code-line pl-4">ep = entry_point</div>
+                    <div class="code-line pl-4 text-slate-500"># 从顶层向下搜索到 level+1</div>
+                    <div id="ln-add-top" class="code-line pl-4"><span class="text-pink-400">for</span> l <span class="text-pink-400">in</span> range(top_layer, level, -1):</div>
+                    <div id="ln-add-greedy" class="code-line pl-8">ep = greedy_search(vec, ep, l)</div>
+                    <div class="code-line pl-4 text-slate-500"># 在 level ~ 0 层搜索并连接</div>
+                    <div id="ln-add-lower" class="code-line pl-4"><span class="text-pink-400">for</span> l <span class="text-pink-400">in</span> range(level, -1, -1):</div>
+                    <div id="ln-add-search" class="code-line pl-8">candidates = search_layer(vec, ep, ef, l)</div>
+                    <div id="ln-add-select" class="code-line pl-8">neighbors = select_neighbors(candidates, M)</div>
+                    <div id="ln-add-conn" class="code-line pl-8">connect(vec, neighbors, l)</div>
+                    <div id="ln-add-ep" class="code-line pl-8">ep = candidates[0]</div>
+                </div>
+                <!-- Code: Search -->
+                <div id="code-group-search" class="hidden">
+                    <div id="ln-q-def" class="code-line"><span class="text-pink-400">def</span> <span class="text-blue-300">knn_search</span>(query, k, ef):</div>
+                    <div id="ln-q-entry" class="code-line pl-4">ep = entry_point</div>
+                    <div class="code-line pl-4 text-slate-500"># 从顶层向下贪心搜索</div>
+                    <div id="ln-q-top" class="code-line pl-4"><span class="text-pink-400">for</span> l <span class="text-pink-400">in</span> range(top_layer, 0, -1):</div>
+                    <div id="ln-q-greedy" class="code-line pl-8">ep = greedy_search(query, ep, l)</div>
+                    <div class="code-line pl-4 text-slate-500"># 在第0层搜索 ef 个候选</div>
+                    <div id="ln-q-layer0" class="code-line pl-4">candidates = search_layer(query, ep, ef, 0)</div>
+                    <div id="ln-q-return" class="code-line pl-4"><span class="text-pink-400">return</span> top_k(candidates, k)</div>
+                </div>
+            </div>
+            <div id="resizer-left-split" class="resizer-h border-t border-slate-700 bg-[#1e293b]"></div>
+            <!-- Logger -->
+            <div id="log-panel" class="bg-[#0f172a] flex flex-col min-h-[100px]" style="height: 160px;">
+                <div class="px-3 py-1 text-[10px] text-slate-500 uppercase font-bold bg-[#1e293b] border-b border-slate-700 flex-shrink-0">执行日志</div>
+                <div id="log-container" class="flex-1 overflow-y-auto p-2 mono text-[10px] text-slate-400 space-y-1 custom-scrollbar">
+                    <div class="italic">等待操作...</div>
+                </div>
+            </div>
+        </aside>
+        <div id="resizer-col-1" class="resizer-v"></div>
+        <!-- CENTER: 3D Canvas -->
+        <main class="flex-1 relative overflow-hidden min-w-[300px]">
+            <div id="three-container" class="w-full h-full"></div>
+            <!-- Layer Labels -->
+            <div id="layer-labels" class="absolute left-4 top-4 flex flex-col gap-2 pointer-events-none"></div>
+            <!-- Prune Indicator -->
+            <div id="prune-indicator" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-0 transition-opacity duration-300 flex flex-col items-center">
+                <div class="bg-red-500 text-white rounded-full p-2 shadow-lg"><i data-lucide="scissors" class="w-6 h-6"></i></div>
+                <span class="bg-red-100 text-red-800 text-xs font-bold px-2 py-1 rounded mt-1 border border-red-200">Pruned</span>
+            </div>
+            <!-- Legend -->
+            <div class="absolute bottom-4 right-4 bg-white/95 backdrop-blur-sm px-4 py-3 rounded-xl border border-slate-200/80 shadow-lg flex flex-col gap-2 pointer-events-none select-none">
+                <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">图例</div>
+                <div class="flex items-center gap-2 text-xs text-slate-600"><span class="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm"></span> 已访问 (Visited)</div>
+                <div class="flex items-center gap-2 text-xs text-slate-600"><span class="w-2.5 h-2.5 rounded-full bg-slate-400"></span> 未访问 (Unvisited)</div>
+                <div class="flex items-center gap-2 text-xs text-slate-600"><span class="w-2.5 h-2.5 rounded-full bg-violet-500 shadow-sm"></span> 入口点 (Entry)</div>
+                <div class="flex items-center gap-2 text-xs text-slate-600"><span class="w-2.5 h-2.5 rounded-full bg-red-500 shadow-sm ring-2 ring-red-200"></span> 查询点 (Query)</div>
+                <div class="flex items-center gap-2 text-xs text-slate-600"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm"></span> 新节点 (New)</div>
+                <div class="flex items-center gap-2 text-xs text-slate-600"><span class="w-6 h-0.5 bg-amber-400 rounded-full"></span> 搜索路径</div>
+                <div class="flex items-center gap-2 text-xs text-slate-600"><span class="w-6 border-t-2 border-dashed border-slate-300"></span> 层间连接</div>
+            </div>
+        </main>
+        <div id="resizer-col-2" class="resizer-v"></div>
+        <!-- RIGHT: Controls -->
+        <aside id="right-panel" class="bg-white border-l border-slate-200 flex flex-col z-10 shadow-xl" style="width: 320px; min-width: 260px;">
+            <div class="p-4 bg-slate-50 border-b border-slate-200 space-y-4 flex-shrink-0">
+                <!-- Mode Switcher -->
+                <div>
+                    <label class="text-xs font-bold text-slate-500 uppercase block mb-2">当前模式</label>
+                    <div class="flex bg-white border border-slate-300 rounded overflow-hidden">
+                        <button id="btn-mode-build" class="flex-1 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 transition-colors">
+                            <i data-lucide="plus-circle" class="w-3 h-3 inline mr-1"></i> 建图
+                        </button>
+                        <div class="w-px bg-slate-200"></div>
+                        <button id="btn-mode-search" class="flex-1 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors">
+                            <i data-lucide="search" class="w-3 h-3 inline mr-1"></i> 搜索
+                        </button>
+                    </div>
+                    <div id="mode-instruction" class="mt-2 p-2 bg-slate-100 border border-slate-200 rounded text-[10px] text-slate-600 leading-tight flex items-start gap-1.5">
+                        <i data-lucide="info" class="w-3 h-3 flex-shrink-0 mt-0.5 text-slate-400"></i>
+                        <span id="mode-instruction-text">点击 <b>添加节点</b> 按钮在随机位置添加新节点。</span>
+                    </div>
+                </div>
+                <!-- Parameters -->
+                <div class="grid grid-cols-4 gap-2">
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-500 block mb-1">M</label>
+                        <input type="number" id="input-m" value="4" min="2" max="8" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-500 block mb-1">ef</label>
+                        <input type="number" id="input-ef" value="8" min="1" max="20" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-500 block mb-1">K</label>
+                        <input type="number" id="input-k" value="3" min="1" max="10" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-500 block mb-1">mL</label>
+                        <input type="number" id="input-ml" value="0.5" min="0.1" max="1" step="0.1" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
+                    </div>
+                </div>
+                <!-- Actions -->
+                <div class="grid grid-cols-2 gap-2">
+                    <button id="btn-add-node" class="bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm">
+                        <i data-lucide="plus" class="w-3 h-3"></i> 添加节点
+                    </button>
+                    <button id="btn-quick-init" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm">
+                        <i data-lucide="zap" class="w-3 h-3"></i> 初始化(30点)
+                    </button>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button id="btn-reset" class="bg-white border border-slate-300 hover:bg-red-50 text-slate-700 hover:text-red-600 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm">
+                        <i data-lucide="trash-2" class="w-3 h-3"></i> 清空
+                    </button>
+                    <button id="btn-reset-view" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm">
+                        <i data-lucide="maximize" class="w-3 h-3"></i> 重置视角
+                    </button>
+                </div>
+                <!-- Playback -->
+                <div class="flex items-center gap-2">
+                    <button id="btn-play" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded text-xs font-bold transition-colors shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i data-lucide="play" class="w-3 h-3 fill-current"></i><span>自动执行</span>
+                    </button>
+                    <button id="btn-next" disabled class="px-3 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded text-xs font-bold transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i data-lucide="step-forward" class="w-3 h-3"></i>
+                    </button>
+                </div>
+            </div>
+            <!-- Current Layer Info -->
+            <div class="px-4 py-2 bg-purple-50 border-b border-purple-100 flex-shrink-0">
+                <div class="flex justify-between items-center">
+                    <span class="text-xs font-bold text-purple-800 flex items-center gap-1"><i data-lucide="layers" class="w-3 h-3"></i> 当前层级</span>
+                    <span id="current-layer" class="text-sm font-mono font-bold text-purple-600">-</span>
+                </div>
+            </div>
+            <!-- Results Panel -->
+            <div id="results-panel" class="flex flex-col border-b border-slate-100 min-h-[80px]" style="height: 160px;">
+                <div class="px-4 py-2 bg-green-50 border-b border-green-100 flex justify-between items-center flex-shrink-0">
+                    <h3 class="text-xs font-bold text-green-800 flex items-center gap-2"><i data-lucide="trophy" class="w-3 h-3"></i> Results</h3>
+                    <span class="text-[9px] text-green-600 bg-green-100 px-1.5 rounded">Top K</span>
+                </div>
+                <div id="list-results" class="flex-1 overflow-y-auto p-2 space-y-1 bg-white custom-scrollbar">
+                    <div class="text-xs text-slate-300 text-center mt-4 italic">Empty</div>
+                </div>
+            </div>
+            <div id="resizer-right-split" class="resizer-h border-t border-slate-200 bg-slate-50"></div>
+            <!-- Frontier Panel -->
+            <div id="frontier-panel" class="flex-1 flex flex-col min-h-[80px]">
+                <div class="px-4 py-2 bg-amber-50 border-b border-amber-100 flex justify-between items-center flex-shrink-0">
+                    <h3 class="text-xs font-bold text-amber-800 flex items-center gap-2"><i data-lucide="list-ordered" class="w-3 h-3"></i> Frontier</h3>
+                    <span class="text-[9px] text-amber-600 bg-amber-100 px-1.5 rounded">待探索</span>
+                </div>
+                <div id="list-frontier" class="flex-1 overflow-y-auto p-2 space-y-1 bg-slate-50/50 custom-scrollbar">
+                    <div class="text-xs text-slate-300 text-center mt-4 italic">Empty</div>
+                </div>
+            </div>
+            <!-- Stats -->
+            <div class="h-8 border-t border-slate-200 bg-slate-50 flex items-center justify-between px-4 text-[10px] text-slate-500 flex-shrink-0">
+                <span id="stat-nodes">Nodes: 0</span>
+                <span id="stat-layers">Layers: 0</span>
+                <span id="stat-calc" class="font-bold text-slate-700">Calcs: 0</span>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+    // ============ CONFIG & STATE ============
+    const CONFIG = { M: 4, ef: 8, k: 3, mL: 0.5, layerHeight: 20, nodeRadius: 0.8, planeSize: 60 };
+    const COLORS = {
+        unvisited: 0x94a3b8, visited: 0x3b82f6, entry: 0x7c3aed,
+        query: 0xef4444, newNode: 0x10b981, highlight: 0xfbbf24,
+        edge: 0xb0b8c4, searchPath: 0xf59e0b, resultEdge: 0x22c55e,
+        verticalLine: 0xcbd5e1,
+        layers: [0x60a5fa, 0xa78bfa, 0xf472b6, 0xfb923c, 0xfacc15],
+        layerPlane: [0xe0f2fe, 0xf3e8ff, 0xfce7f3, 0xfff7ed, 0xfefce8],
+        layerBorder: [0x38bdf8, 0xa78bfa, 0xf472b6, 0xfb923c, 0xfacc15]
+    };
+    const STATE = {
+        nodes: [], entryPoint: null, topLayer: 0, queryPoint: null,
+        mode: 'BUILD', isExecuting: false, isPaused: false, isWaitingConfirm: false,
+        frontier: [], results: [], visited: new Set(), distCalcCount: 0,
+        generator: null, stepSpeed: 400, timer: null, currentLayer: -1,
+        activeBuildNode: null, activeSearchNode: null, tempEdges: [], highlightNodes: []
+    };
+
+    // ============ THREE.JS SETUP ============
+    let scene, camera, renderer, controls;
+    let nodeGroup, edgeGroup, tempEdgeGroup, planeGroup;
+    const container = document.getElementById('three-container');
+
+    function initThree() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf8fafc);
+        const w = container.clientWidth, h = container.clientHeight;
+        // Isometric-like perspective
+        camera = new THREE.PerspectiveCamera(35, w/h, 0.1, 1000);
+        camera.position.set(80, 60, 80);
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(w, h);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; controls.dampingFactor = 0.08;
+        controls.minDistance = 40; controls.maxDistance = 200;
+        controls.maxPolarAngle = Math.PI / 2.2;
+        // Soft lighting
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        dirLight.position.set(60, 100, 60);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+        const fillLight = new THREE.DirectionalLight(0xe0f2fe, 0.3);
+        fillLight.position.set(-40, 50, -40); scene.add(fillLight);
+        // Groups
+        planeGroup = new THREE.Group(); scene.add(planeGroup);
+        edgeGroup = new THREE.Group(); scene.add(edgeGroup);
+        tempEdgeGroup = new THREE.Group(); scene.add(tempEdgeGroup);
+        nodeGroup = new THREE.Group(); scene.add(nodeGroup);
+        animate();
+    }
+    function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+    function onResize() {
+        const w = container.clientWidth, h = container.clientHeight;
+        camera.aspect = w/h; camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+    }
+    window.addEventListener('resize', onResize);
+
+    // ============ HELPER FUNCTIONS ============
+    function dist3D(a, b) { return Math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2 + (a.z-b.z)**2); }
+    function randomLevel() { let l = 0; while (Math.random() < CONFIG.mL && l < 4) l++; return l; }
+    function getLayerY(layer) { return layer * CONFIG.layerHeight; }
+    function log(msg, cls='text-slate-400') {
+        const div = document.createElement('div'); div.className = cls + ' fade-enter'; div.innerText = `> ${msg}`;
+        const c = document.getElementById('log-container'); c.appendChild(div); c.scrollTop = c.scrollHeight;
+    }
+    function highlightCode(id) {
+        document.querySelectorAll('.code-active').forEach(el => el.classList.remove('code-active'));
+        if (id) document.getElementById(id)?.classList.add('code-active');
+    }
+    function showPruneEffect() {
+        const el = document.getElementById('prune-indicator'); el.style.opacity = '1';
+        setTimeout(() => el.style.opacity = '0', 800);
+    }
+    function updateConfig() {
+        CONFIG.M = Math.max(2, parseInt(document.getElementById('input-m').value) || 4);
+        CONFIG.ef = Math.max(1, parseInt(document.getElementById('input-ef').value) || 8);
+        CONFIG.k = Math.max(1, parseInt(document.getElementById('input-k').value) || 3);
+        CONFIG.mL = Math.max(0.1, Math.min(1, parseFloat(document.getElementById('input-ml').value) || 0.5));
+    }
+    ['input-m','input-ef','input-k','input-ml'].forEach(id => 
+        document.getElementById(id).addEventListener('change', updateConfig)
+    );
+
+    // ============ RENDERING ============
+    function clearScene() {
+        while(nodeGroup.children.length) nodeGroup.remove(nodeGroup.children[0]);
+        while(edgeGroup.children.length) edgeGroup.remove(edgeGroup.children[0]);
+        while(tempEdgeGroup.children.length) tempEdgeGroup.remove(tempEdgeGroup.children[0]);
+        while(planeGroup.children.length) planeGroup.remove(planeGroup.children[0]);
+    }
+    // Create rounded rectangle shape
+    function createRoundedRectShape(w, h, r) {
+        const shape = new THREE.Shape();
+        shape.moveTo(-w/2 + r, -h/2);
+        shape.lineTo(w/2 - r, -h/2);
+        shape.quadraticCurveTo(w/2, -h/2, w/2, -h/2 + r);
+        shape.lineTo(w/2, h/2 - r);
+        shape.quadraticCurveTo(w/2, h/2, w/2 - r, h/2);
+        shape.lineTo(-w/2 + r, h/2);
+        shape.quadraticCurveTo(-w/2, h/2, -w/2, h/2 - r);
+        shape.lineTo(-w/2, -h/2 + r);
+        shape.quadraticCurveTo(-w/2, -h/2, -w/2 + r, -h/2);
+        return shape;
+    }
+    function rebuildScene() {
+        clearScene();
+        const size = CONFIG.planeSize;
+        const radius = 4;
+        // Build glass planes for each layer
+        for (let layer = 0; layer <= STATE.topLayer; layer++) {
+            const y = getLayerY(layer);
+            const colorIdx = layer % COLORS.layerPlane.length;
+            // Glass plane
+            const shape = createRoundedRectShape(size, size, radius);
+            const planeGeom = new THREE.ShapeGeometry(shape);
+            const planeMat = new THREE.MeshPhysicalMaterial({
+                color: COLORS.layerPlane[colorIdx],
+                transparent: true,
+                opacity: 0.35,
+                roughness: 0.1,
+                metalness: 0,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            const plane = new THREE.Mesh(planeGeom, planeMat);
+            plane.rotation.x = -Math.PI / 2;
+            plane.position.y = y;
+            plane.receiveShadow = true;
+            planeGroup.add(plane);
+            // Border outline
+            const borderShape = createRoundedRectShape(size, size, radius);
+            const borderPoints = borderShape.getPoints(48);
+            const borderGeom = new THREE.BufferGeometry().setFromPoints(borderPoints.map(p => new THREE.Vector3(p.x, 0, p.y)));
+            const borderMat = new THREE.LineBasicMaterial({ color: COLORS.layerBorder[colorIdx], opacity: 0.8, transparent: true, linewidth: 2 });
+            const border = new THREE.LineLoop(borderGeom, borderMat);
+            border.position.y = y + 0.05;
+            planeGroup.add(border);
+        }
+        // Build horizontal edges (gray) for each layer
+        STATE.nodes.forEach(node => {
+            for (let layer = 0; layer <= node.level; layer++) {
+                const neighbors = node.neighbors[layer] || [];
+                neighbors.forEach(nbId => {
+                    const nb = STATE.nodes.find(n => n.id === nbId);
+                    if (nb && nb.id > node.id) {
+                        const y = getLayerY(layer);
+                        const geom = new THREE.BufferGeometry().setFromPoints([
+                            new THREE.Vector3(node.x, y + 0.3, node.z),
+                            new THREE.Vector3(nb.x, y + 0.3, nb.z)
+                        ]);
+                        const mat = new THREE.LineBasicMaterial({ color: COLORS.edge, opacity: 0.6, transparent: true });
+                        edgeGroup.add(new THREE.Line(geom, mat));
+                    }
+                });
+            }
+        });
+        // Build nodes for each layer
+        STATE.nodes.forEach(node => {
+            for (let layer = 0; layer <= node.level; layer++) {
+                const y = getLayerY(layer);
+                const geom = new THREE.SphereGeometry(CONFIG.nodeRadius, 24, 24);
+                let color = COLORS.unvisited;
+                let emissiveIntensity = 0.15;
+                if (STATE.visited.has(node.id)) { color = COLORS.visited; emissiveIntensity = 0.3; }
+                if (STATE.entryPoint && node.id === STATE.entryPoint.id) { color = COLORS.entry; emissiveIntensity = 0.4; }
+                if (STATE.activeBuildNode && node.id === STATE.activeBuildNode.id) { color = COLORS.newNode; emissiveIntensity = 0.5; }
+                if (STATE.activeSearchNode === node.id) { color = COLORS.highlight; emissiveIntensity = 0.6; }
+                if (STATE.highlightNodes.includes(node.id)) { color = COLORS.resultEdge; emissiveIntensity = 0.5; }
+                const mat = new THREE.MeshStandardMaterial({
+                    color, emissive: color, emissiveIntensity,
+                    roughness: 0.3, metalness: 0.1
+                });
+                const mesh = new THREE.Mesh(geom, mat);
+                mesh.position.set(node.x, y + 0.8, node.z);
+                mesh.castShadow = true;
+                nodeGroup.add(mesh);
+            }
+            // Vertical dashed connectors between layers
+            if (node.level > 0) {
+                for (let l = 0; l < node.level; l++) {
+                    const points = [];
+                    const segments = 8;
+                    const y1 = getLayerY(l) + 0.8, y2 = getLayerY(l+1) + 0.8;
+                    for (let i = 0; i <= segments; i++) {
+                        points.push(new THREE.Vector3(node.x, y1 + (y2-y1) * i / segments, node.z));
+                    }
+                    const geom = new THREE.BufferGeometry().setFromPoints(points);
+                    const mat = new THREE.LineDashedMaterial({
+                        color: COLORS.verticalLine, dashSize: 1.2, gapSize: 0.8,
+                        opacity: 0.5, transparent: true
+                    });
+                    const line = new THREE.Line(geom, mat);
+                    line.computeLineDistances();
+                    edgeGroup.add(line);
+                }
+            }
+        });
+        // Query point (red target)
+        if (STATE.queryPoint) {
+            const y = getLayerY(STATE.currentLayer >= 0 ? STATE.currentLayer : 0);
+            // Outer glow ring
+            const ringGeom = new THREE.RingGeometry(CONFIG.nodeRadius * 1.8, CONFIG.nodeRadius * 2.2, 32);
+            const ringMat = new THREE.MeshBasicMaterial({ color: COLORS.query, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
+            const ring = new THREE.Mesh(ringGeom, ringMat);
+            ring.rotation.x = -Math.PI / 2;
+            ring.position.set(STATE.queryPoint.x, y + 0.3, STATE.queryPoint.z);
+            nodeGroup.add(ring);
+            // Core sphere
+            const geom = new THREE.SphereGeometry(CONFIG.nodeRadius * 1.2, 24, 24);
+            const mat = new THREE.MeshStandardMaterial({
+                color: COLORS.query, emissive: COLORS.query, emissiveIntensity: 0.6,
+                roughness: 0.2, metalness: 0.1
+            });
+            const mesh = new THREE.Mesh(geom, mat);
+            mesh.position.set(STATE.queryPoint.x, y + 0.8, STATE.queryPoint.z);
+            mesh.castShadow = true;
+            nodeGroup.add(mesh);
+        }
+        // Active build node (new node being added)
+        if (STATE.activeBuildNode && !STATE.nodes.find(n => n.id === STATE.activeBuildNode.id)) {
+            for (let l = 0; l <= STATE.activeBuildNode.level; l++) {
+                const y = getLayerY(l);
+                const geom = new THREE.SphereGeometry(CONFIG.nodeRadius * 1.1, 24, 24);
+                const mat = new THREE.MeshStandardMaterial({
+                    color: COLORS.newNode, emissive: COLORS.newNode, emissiveIntensity: 0.5,
+                    roughness: 0.2, metalness: 0.1
+                });
+                const mesh = new THREE.Mesh(geom, mat);
+                mesh.position.set(STATE.activeBuildNode.x, y + 0.8, STATE.activeBuildNode.z);
+                mesh.castShadow = true;
+                nodeGroup.add(mesh);
+            }
+        }
+        // Temp edges (search path - highlighted)
+        STATE.tempEdges.forEach(e => {
+            const geom = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(e.p1.x, e.y + 0.8, e.p1.z),
+                new THREE.Vector3(e.p2.x, e.y + 0.8, e.p2.z)
+            ]);
+            const mat = new THREE.LineBasicMaterial({ color: e.color || COLORS.searchPath, linewidth: 3, opacity: 0.9, transparent: true });
+            tempEdgeGroup.add(new THREE.Line(geom, mat));
+            // Glow effect tube
+            const curve = new THREE.LineCurve3(
+                new THREE.Vector3(e.p1.x, e.y + 0.8, e.p1.z),
+                new THREE.Vector3(e.p2.x, e.y + 0.8, e.p2.z)
+            );
+            const tubeGeom = new THREE.TubeGeometry(curve, 1, 0.15, 8, false);
+            const tubeMat = new THREE.MeshBasicMaterial({ color: e.color || COLORS.searchPath, transparent: true, opacity: 0.3 });
+            tempEdgeGroup.add(new THREE.Mesh(tubeGeom, tubeMat));
+        });
+        updateLayerLabels();
+    }
+    function updateLayerLabels() {
+        const labelsDiv = document.getElementById('layer-labels');
+        labelsDiv.innerHTML = '';
+        for (let l = STATE.topLayer; l >= 0; l--) {
+            const colorIdx = l % COLORS.layerBorder.length;
+            const borderColor = `#${COLORS.layerBorder[colorIdx].toString(16).padStart(6, '0')}`;
+            const div = document.createElement('div');
+            div.className = `px-3 py-1.5 rounded-lg text-[11px] font-bold shadow-sm backdrop-blur-sm transition-all`;
+            div.style.cssText = STATE.currentLayer === l 
+                ? `background: ${borderColor}; color: white; border: 1px solid ${borderColor};`
+                : `background: rgba(255,255,255,0.9); color: #64748b; border: 1px solid ${borderColor}40;`;
+            div.innerText = `Layer ${l}`;
+            labelsDiv.appendChild(div);
+        }
+    }
+    function updateLists() {
+        const frontierEl = document.getElementById('list-frontier');
+        const resultsEl = document.getElementById('list-results');
+        const makeItem = (item) => `<div class="text-[10px] flex justify-between p-1 border-b border-slate-100 last:border-0 fade-enter"><span>#${item.node.id}</span><span class="font-mono text-slate-500">${item.dist.toFixed(1)}</span></div>`;
+        frontierEl.innerHTML = STATE.frontier.length ? STATE.frontier.sort((a,b)=>a.dist-b.dist).map(makeItem).join('') : '<div class="text-center text-xs text-slate-300 mt-2">Empty</div>';
+        resultsEl.innerHTML = STATE.results.length ? STATE.results.sort((a,b)=>a.dist-b.dist).map(makeItem).join('') : '<div class="text-center text-xs text-slate-300 mt-2">Empty</div>';
+    }
+    function updateUI() {
+        document.getElementById('stat-nodes').innerText = `Nodes: ${STATE.nodes.length}`;
+        document.getElementById('stat-layers').innerText = `Layers: ${STATE.topLayer + 1}`;
+        document.getElementById('stat-calc').innerText = `Calcs: ${STATE.distCalcCount}`;
+        document.getElementById('current-layer').innerText = STATE.currentLayer >= 0 ? `L${STATE.currentLayer}` : '-';
+        const btnPlay = document.getElementById('btn-play');
+        const btnNext = document.getElementById('btn-next');
+        if (STATE.isWaitingConfirm) {
+            btnNext.disabled = true;
+            btnPlay.innerHTML = '<i data-lucide="check" class="w-3 h-3"></i> 完成';
+            btnPlay.classList.remove('bg-indigo-600', 'bg-amber-500'); btnPlay.classList.add('bg-green-600');
+        } else if (STATE.isExecuting) {
+            btnNext.disabled = !STATE.isPaused;
+            btnPlay.innerHTML = STATE.isPaused ? '<i data-lucide="play" class="w-3 h-3"></i> 继续' : '<i data-lucide="pause" class="w-3 h-3"></i> 暂停';
+            btnPlay.classList.toggle('bg-amber-500', !STATE.isPaused);
+            btnPlay.classList.toggle('bg-indigo-600', STATE.isPaused);
+            btnPlay.classList.remove('bg-green-600');
+        } else {
+            btnNext.disabled = false;
+            btnPlay.innerHTML = '<i data-lucide="play" class="w-3 h-3"></i> 自动执行';
+            btnPlay.classList.remove('bg-amber-500', 'bg-green-600'); btnPlay.classList.add('bg-indigo-600');
+        }
+        lucide.createIcons();
+    }
+
+    // ============ SILENT ADD (for initialization) ============
+    function addNodeSilent(x, z) {
+        const level = randomLevel();
+        const newNode = { id: STATE.nodes.length + 1, x, z, level, neighbors: {} };
+        for (let l = 0; l <= level; l++) newNode.neighbors[l] = [];
+        if (STATE.nodes.length === 0) {
+            STATE.entryPoint = newNode; STATE.topLayer = level;
+            STATE.nodes.push(newNode); return;
+        }
+        let ep = STATE.entryPoint;
+        // Greedy search from top to level+1
+        for (let l = STATE.topLayer; l > level; l--) {
+            let changed = true;
+            while (changed) {
+                changed = false;
+                const neighbors = ep.neighbors[l] || [];
+                for (const nbId of neighbors) {
+                    const nb = STATE.nodes.find(n => n.id === nbId);
+                    if (nb && dist3D(newNode, nb) < dist3D(newNode, ep)) { ep = nb; changed = true; }
+                }
+            }
+        }
+        // Search and connect at each layer from level down to 0
+        for (let l = Math.min(level, STATE.topLayer); l >= 0; l--) {
+            const candidates = searchLayerSilent(newNode, ep, CONFIG.ef, l);
+            const toConnect = candidates.slice(0, CONFIG.M);
+            for (const c of toConnect) {
+                if (!newNode.neighbors[l]) newNode.neighbors[l] = [];
+                if (!newNode.neighbors[l].includes(c.node.id)) newNode.neighbors[l].push(c.node.id);
+                if (!c.node.neighbors[l]) c.node.neighbors[l] = [];
+                if (!c.node.neighbors[l].includes(newNode.id)) c.node.neighbors[l].push(newNode.id);
+                // Prune if exceeds M
+                if (c.node.neighbors[l].length > CONFIG.M * 2) {
+                    c.node.neighbors[l] = c.node.neighbors[l].slice(0, CONFIG.M * 2);
+                }
+            }
+            if (candidates.length > 0) ep = candidates[0].node;
+        }
+        STATE.nodes.push(newNode);
+        if (level > STATE.topLayer) { STATE.topLayer = level; STATE.entryPoint = newNode; }
+    }
+    function searchLayerSilent(target, ep, ef, layer) {
+        const d = dist3D(target, ep);
+        let frontier = [{ dist: d, node: ep }];
+        let results = [{ dist: d, node: ep }];
+        const visited = new Set([ep.id]);
+        while (frontier.length > 0) {
+            frontier.sort((a,b) => a.dist - b.dist);
+            const current = frontier.shift();
+            if (results.length >= ef && current.dist > results[results.length-1].dist) break;
+            const neighbors = current.node.neighbors[layer] || [];
+            for (const nbId of neighbors) {
+                if (!visited.has(nbId)) {
+                    visited.add(nbId);
+                    const nb = STATE.nodes.find(n => n.id === nbId);
+                    if (nb) {
+                        const nbDist = dist3D(target, nb);
+                        if (results.length < ef || nbDist < results[results.length-1].dist) {
+                            frontier.push({ dist: nbDist, node: nb });
+                            results.push({ dist: nbDist, node: nb });
+                            results.sort((a,b) => a.dist - b.dist);
+                            if (results.length > ef) results.pop();
+                        }
+                    }
+                }
+            }
+        }
+        return results;
+    }
+
+    // ============ GENERATOR: ADD ITEM (animated) ============
+    function* genAddItem(x, z) {
+        const level = randomLevel();
+        const newNode = { id: STATE.nodes.length + 1, x, z, level, neighbors: {} };
+        for (let l = 0; l <= level; l++) newNode.neighbors[l] = [];
+        STATE.activeBuildNode = newNode; STATE.distCalcCount = 0; STATE.visited.clear();
+        STATE.frontier = []; STATE.results = []; STATE.tempEdges = [];
+        highlightCode('ln-add-def'); log(`添加节点 #${newNode.id}, 层级=${level}`);
+        rebuildScene(); updateUI(); yield;
+        if (STATE.nodes.length === 0) {
+            STATE.entryPoint = newNode; STATE.topLayer = level;
+            STATE.nodes.push(newNode);
+            highlightCode('ln-add-entry'); log("图为空，设置为入口点。", "text-green-400");
+            STATE.activeBuildNode = null; rebuildScene(); updateUI(); yield;
+            return;
+        }
+        let ep = STATE.entryPoint;
+        highlightCode('ln-add-level'); yield;
+        highlightCode('ln-add-entry'); log(`从入口点 #${ep.id} 开始`); yield;
+        // Top layers greedy search
+        highlightCode('ln-add-top');
+        for (let l = STATE.topLayer; l > level; l--) {
+            STATE.currentLayer = l; log(`层 ${l}: 贪心搜索...`, "text-purple-400");
+            rebuildScene(); yield;
+            let changed = true;
+            while (changed) {
+                changed = false;
+                highlightCode('ln-add-greedy');
+                const neighbors = ep.neighbors[l] || [];
+                STATE.visited.add(ep.id);
+                for (const nbId of neighbors) {
+                    const nb = STATE.nodes.find(n => n.id === nbId);
+                    if (nb) {
+                        STATE.tempEdges = [{ p1: ep, p2: nb, y: getLayerY(l), color: COLORS.searchPath }];
+                        STATE.distCalcCount++;
+                        rebuildScene(); yield;
+                        if (dist3D(newNode, nb) < dist3D(newNode, ep)) {
+                            ep = nb; changed = true; log(`移动到 #${nb.id}`);
+                            STATE.visited.add(nb.id);
+                        }
+                    }
+                }
+            }
+            STATE.tempEdges = [];
+        }
+        // Search and connect at lower layers
+        highlightCode('ln-add-lower');
+        for (let l = Math.min(level, STATE.topLayer); l >= 0; l--) {
+            STATE.currentLayer = l; log(`层 ${l}: 搜索并连接...`, "text-blue-400");
+            STATE.visited.add(ep.id); rebuildScene(); yield;
+            highlightCode('ln-add-search');
+            // Inline search_layer with animation
+            const d = dist3D(newNode, ep); STATE.distCalcCount++;
+            STATE.frontier = [{ dist: d, node: ep }];
+            STATE.results = [{ dist: d, node: ep }];
+            const layerVisited = new Set([ep.id]);
+            updateLists(); rebuildScene(); yield;
+            while (STATE.frontier.length > 0) {
+                STATE.frontier.sort((a,b) => a.dist - b.dist);
+                const current = STATE.frontier.shift();
+                STATE.activeSearchNode = current.node.id;
+                updateLists(); rebuildScene(); yield;
+                if (STATE.results.length >= CONFIG.ef && current.dist > STATE.results[STATE.results.length-1].dist) {
+                    showPruneEffect(); log("剪枝!", "text-red-400"); yield; break;
+                }
+                const neighbors = current.node.neighbors[l] || [];
+                for (const nbId of neighbors) {
+                    if (!layerVisited.has(nbId)) {
+                        layerVisited.add(nbId); STATE.visited.add(nbId);
+                        const nb = STATE.nodes.find(n => n.id === nbId);
+                        if (nb) {
+                            STATE.tempEdges = [{ p1: current.node, p2: nb, y: getLayerY(l), color: COLORS.searchPath }];
+                            const nbDist = dist3D(newNode, nb); STATE.distCalcCount++;
+                            rebuildScene(); yield;
+                            if (STATE.results.length < CONFIG.ef || nbDist < STATE.results[STATE.results.length-1].dist) {
+                                STATE.frontier.push({ dist: nbDist, node: nb });
+                                STATE.results.push({ dist: nbDist, node: nb });
+                                STATE.results.sort((a,b) => a.dist - b.dist);
+                                if (STATE.results.length > CONFIG.ef) STATE.results.pop();
+                                updateLists();
+                            }
+                        }
+                    }
+                }
+                STATE.tempEdges = [];
+            }
+            STATE.activeSearchNode = null;
+            // Select and connect
+            highlightCode('ln-add-select');
+            const toConnect = STATE.results.slice(0, CONFIG.M);
+            STATE.highlightNodes = toConnect.map(c => c.node.id);
+            log(`选择 ${toConnect.length} 个邻居连接`);
+            rebuildScene(); yield;
+            highlightCode('ln-add-conn');
+            for (const c of toConnect) {
+                if (!newNode.neighbors[l]) newNode.neighbors[l] = [];
+                if (!newNode.neighbors[l].includes(c.node.id)) newNode.neighbors[l].push(c.node.id);
+                if (!c.node.neighbors[l]) c.node.neighbors[l] = [];
+                if (!c.node.neighbors[l].includes(newNode.id)) c.node.neighbors[l].push(newNode.id);
+                STATE.tempEdges.push({ p1: newNode, p2: c.node, y: getLayerY(l), color: COLORS.resultEdge });
+            }
+            rebuildScene(); yield;
+            STATE.tempEdges = []; STATE.highlightNodes = [];
+            if (STATE.results.length > 0) ep = STATE.results[0].node;
+            highlightCode('ln-add-ep');
+        }
+        STATE.nodes.push(newNode);
+        if (level > STATE.topLayer) { STATE.topLayer = level; STATE.entryPoint = newNode; }
+        STATE.activeBuildNode = null; STATE.currentLayer = -1;
+        log("节点添加完成。点击'完成'结束。", "text-green-500 font-bold");
+        rebuildScene(); updateUI(); yield 'WAIT_CONFIRM';
+    }
+
+    // ============ GENERATOR: SEARCH (animated) ============
+    function* genSearch(x, z) {
+        STATE.queryPoint = { x, z }; STATE.distCalcCount = 0; STATE.visited.clear();
+        STATE.frontier = []; STATE.results = []; STATE.tempEdges = []; STATE.highlightNodes = [];
+        highlightCode('ln-q-def'); log(`搜索查询点 (${x.toFixed(1)}, ${z.toFixed(1)})`);
+        rebuildScene(); updateUI(); yield;
+        if (!STATE.entryPoint) { log("图为空!", "text-red-400"); return; }
+        let ep = STATE.entryPoint;
+        highlightCode('ln-q-entry'); log(`从入口点 #${ep.id} 开始`); yield;
+        // Greedy search from top to layer 1
+        highlightCode('ln-q-top');
+        for (let l = STATE.topLayer; l > 0; l--) {
+            STATE.currentLayer = l; log(`层 ${l}: 贪心搜索...`, "text-purple-400");
+            rebuildScene(); yield;
+            let changed = true;
+            while (changed) {
+                changed = false;
+                highlightCode('ln-q-greedy');
+                STATE.visited.add(ep.id);
+                const neighbors = ep.neighbors[l] || [];
+                for (const nbId of neighbors) {
+                    const nb = STATE.nodes.find(n => n.id === nbId);
+                    if (nb) {
+                        STATE.tempEdges = [{ p1: ep, p2: nb, y: getLayerY(l), color: COLORS.searchPath }];
+                        STATE.distCalcCount++;
+                        rebuildScene(); yield;
+                        if (dist3D(STATE.queryPoint, nb) < dist3D(STATE.queryPoint, ep)) {
+                            ep = nb; changed = true; log(`移动到 #${nb.id}`);
+                            STATE.visited.add(nb.id);
+                        }
+                    }
+                }
+            }
+            STATE.tempEdges = [];
+        }
+        // Search layer 0 with ef candidates
+        STATE.currentLayer = 0; log("层 0: 搜索 ef 个候选...", "text-blue-400");
+        highlightCode('ln-q-layer0');
+        const d = dist3D(STATE.queryPoint, ep); STATE.distCalcCount++;
+        STATE.frontier = [{ dist: d, node: ep }];
+        STATE.results = [{ dist: d, node: ep }];
+        STATE.visited.add(ep.id);
+        const layerVisited = new Set([ep.id]);
+        updateLists(); rebuildScene(); yield;
+        while (STATE.frontier.length > 0) {
+            STATE.frontier.sort((a,b) => a.dist - b.dist);
+            const current = STATE.frontier.shift();
+            STATE.activeSearchNode = current.node.id;
+            updateLists(); rebuildScene(); yield;
+            if (STATE.results.length >= CONFIG.ef && current.dist > STATE.results[STATE.results.length-1].dist) {
+                showPruneEffect(); log("剪枝!", "text-red-400"); yield; break;
+            }
+            const neighbors = current.node.neighbors[0] || [];
+            for (const nbId of neighbors) {
+                if (!layerVisited.has(nbId)) {
+                    layerVisited.add(nbId); STATE.visited.add(nbId);
+                    const nb = STATE.nodes.find(n => n.id === nbId);
+                    if (nb) {
+                        STATE.tempEdges = [{ p1: current.node, p2: nb, y: 0, color: COLORS.searchPath }];
+                        const nbDist = dist3D(STATE.queryPoint, nb); STATE.distCalcCount++;
+                        rebuildScene(); yield;
+                        if (STATE.results.length < CONFIG.ef || nbDist < STATE.results[STATE.results.length-1].dist) {
+                            STATE.frontier.push({ dist: nbDist, node: nb });
+                            STATE.results.push({ dist: nbDist, node: nb });
+                            STATE.results.sort((a,b) => a.dist - b.dist);
+                            if (STATE.results.length > CONFIG.ef) STATE.results.pop();
+                            updateLists();
+                        }
+                    }
+                }
+            }
+            STATE.tempEdges = [];
+        }
+        STATE.activeSearchNode = null;
+        highlightCode('ln-q-return');
+        const topK = STATE.results.slice(0, CONFIG.k);
+        STATE.highlightNodes = topK.map(r => r.node.id);
+        STATE.results = topK;
+        STATE.tempEdges = topK.map(r => ({ p1: STATE.queryPoint, p2: r.node, y: 0, color: COLORS.resultEdge }));
+        log(`返回 Top ${CONFIG.k} 结果`, "text-green-500 font-bold");
+        updateLists(); rebuildScene(); yield 'WAIT_CONFIRM';
+    }
+
+    // ============ CONTROLLERS ============
+    function resetExecution() {
+        clearInterval(STATE.timer);
+        STATE.isExecuting = false; STATE.isPaused = false; STATE.isWaitingConfirm = false;
+        STATE.generator = null; STATE.activeSearchNode = null; STATE.currentLayer = -1;
+        STATE.tempEdges = []; STATE.highlightNodes = []; STATE.frontier = []; STATE.results = [];
+        highlightCode(null); updateLists(); updateUI();
+    }
+    function step() {
+        if (!STATE.generator) return;
+        const res = STATE.generator.next();
+        if (res.value === 'WAIT_CONFIRM') {
+            clearInterval(STATE.timer); STATE.isPaused = true; STATE.isWaitingConfirm = true;
+            updateUI(); return;
+        }
+        if (res.done) resetExecution();
+    }
+    function finishAction() {
+        STATE.queryPoint = null; STATE.activeBuildNode = null;
+        STATE.tempEdges = []; STATE.highlightNodes = []; STATE.visited.clear();
+        STATE.isWaitingConfirm = false; STATE.isExecuting = false;
+        STATE.currentLayer = -1;
+        resetExecution(); rebuildScene();
+        log("操作完成。", "text-slate-500");
+    }
+    function startAddNode() {
+        if (STATE.isExecuting) return;
+        resetExecution();
+        const x = (Math.random() - 0.5) * 50;
+        const z = (Math.random() - 0.5) * 50;
+        STATE.generator = genAddItem(x, z);
+        STATE.isExecuting = true; STATE.isPaused = false;
+        STATE.timer = setInterval(step, STATE.stepSpeed);
+        updateUI();
+    }
+    function startSearch() {
+        if (STATE.isExecuting || STATE.nodes.length === 0) {
+            if (STATE.nodes.length === 0) log("图为空，请先添加节点!", "text-red-400");
+            return;
+        }
+        resetExecution();
+        const x = (Math.random() - 0.5) * 50;
+        const z = (Math.random() - 0.5) * 50;
+        STATE.generator = genSearch(x, z);
+        STATE.isExecuting = true; STATE.isPaused = false;
+        STATE.timer = setInterval(step, STATE.stepSpeed);
+        updateUI();
+    }
+    function setMode(mode) {
+        STATE.mode = mode;
+        STATE.queryPoint = null; STATE.activeBuildNode = null; STATE.visited.clear();
+        STATE.tempEdges = []; STATE.highlightNodes = []; STATE.currentLayer = -1;
+        resetExecution(); rebuildScene();
+        const btnBuild = document.getElementById('btn-mode-build');
+        const btnSearch = document.getElementById('btn-mode-search');
+        const label = document.getElementById('code-mode-label');
+        const descText = document.getElementById('mode-instruction-text');
+        const btnAdd = document.getElementById('btn-add-node');
+        if (mode === 'BUILD') {
+            btnBuild.className = "flex-1 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 transition-colors";
+            btnSearch.className = "flex-1 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors";
+            label.innerText = "建图模式";
+            descText.innerHTML = "点击 <b>添加节点</b> 按钮在随机位置添加新节点。";
+            btnAdd.innerHTML = '<i data-lucide="plus" class="w-3 h-3"></i> 添加节点';
+            btnAdd.classList.remove('bg-indigo-600'); btnAdd.classList.add('bg-emerald-600');
+            document.getElementById('code-group-build').classList.remove('hidden');
+            document.getElementById('code-group-search').classList.add('hidden');
+        } else {
+            btnSearch.className = "flex-1 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 transition-colors";
+            btnBuild.className = "flex-1 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors";
+            label.innerText = "搜索模式";
+            descText.innerHTML = "点击 <b>搜索</b> 按钮在随机位置设置查询点。";
+            btnAdd.innerHTML = '<i data-lucide="search" class="w-3 h-3"></i> 搜索';
+            btnAdd.classList.remove('bg-emerald-600'); btnAdd.classList.add('bg-indigo-600');
+            document.getElementById('code-group-search').classList.remove('hidden');
+            document.getElementById('code-group-build').classList.add('hidden');
+        }
+        lucide.createIcons();
+    }
+    function quickInit() {
+        resetExecution();
+        STATE.nodes = []; STATE.entryPoint = null; STATE.topLayer = 0;
+        STATE.queryPoint = null; STATE.activeBuildNode = null; STATE.visited.clear();
+        log("正在生成 30 个节点...", "text-blue-400");
+        for (let i = 0; i < 30; i++) {
+            const x = (Math.random() - 0.5) * 50;
+            const z = (Math.random() - 0.5) * 50;
+            addNodeSilent(x, z);
+        }
+        rebuildScene(); updateUI();
+        log("初始化完成 (30点)。", "text-green-500");
+    }
+    function resetAll() {
+        resetExecution();
+        STATE.nodes = []; STATE.entryPoint = null; STATE.topLayer = 0;
+        STATE.queryPoint = null; STATE.activeBuildNode = null; STATE.visited.clear();
+        rebuildScene(); updateUI();
+        log("画布已清空。");
+    }
+    function resetView() {
+        const centerY = STATE.topLayer * CONFIG.layerHeight / 2;
+        camera.position.set(80, centerY + 50, 80);
+        controls.target.set(0, centerY, 0);
+        controls.update();
+    }
+
+    // ============ RESIZERS ============
+    function initResizers() {
+        const makeResizableCol = (resizer, leftEl, rightEl, isLeft) => {
+            let isResizing = false;
+            resizer.addEventListener('mousedown', () => { isResizing = true; document.body.style.cursor = 'col-resize'; });
+            window.addEventListener('mousemove', e => {
+                if (!isResizing) return; e.preventDefault();
+                if (isLeft) {
+                    const newW = Math.max(280, Math.min(600, e.clientX));
+                    leftEl.style.width = `${newW}px`;
+                } else {
+                    const newW = Math.max(260, Math.min(500, window.innerWidth - e.clientX));
+                    rightEl.style.width = `${newW}px`;
+                }
+                onResize();
+            });
+            window.addEventListener('mouseup', () => { isResizing = false; document.body.style.cursor = ''; });
+        };
+        makeResizableCol(document.getElementById('resizer-col-1'), document.getElementById('left-panel'), null, true);
+        makeResizableCol(document.getElementById('resizer-col-2'), null, document.getElementById('right-panel'), false);
+        const makeResizableRow = (resizer, topEl, containerEl, isBottom) => {
+            let isResizing = false;
+            resizer.addEventListener('mousedown', () => { isResizing = true; document.body.style.cursor = 'row-resize'; });
+            window.addEventListener('mousemove', e => {
+                if (!isResizing) return; e.preventDefault();
+                const containerRect = containerEl.getBoundingClientRect();
+                if (isBottom) {
+                    const newH = Math.max(100, Math.min(containerRect.height - 100, containerRect.bottom - e.clientY));
+                    topEl.style.height = `${newH}px`;
+                } else {
+                    const newH = Math.max(80, e.clientY - topEl.getBoundingClientRect().top);
+                    topEl.style.height = `${newH}px`;
+                }
+            });
+            window.addEventListener('mouseup', () => { isResizing = false; document.body.style.cursor = ''; });
+        };
+        makeResizableRow(document.getElementById('resizer-left-split'), document.getElementById('log-panel'), document.getElementById('left-panel'), true);
+        makeResizableRow(document.getElementById('resizer-right-split'), document.getElementById('results-panel'), document.getElementById('right-panel'), false);
+    }
+
+    // ============ EVENT BINDINGS ============
+    document.getElementById('btn-mode-build').onclick = () => setMode('BUILD');
+    document.getElementById('btn-mode-search').onclick = () => setMode('SEARCH');
+    document.getElementById('btn-add-node').onclick = () => {
+        if (STATE.mode === 'BUILD') startAddNode();
+        else startSearch();
+    };
+    document.getElementById('btn-quick-init').onclick = quickInit;
+    document.getElementById('btn-reset').onclick = resetAll;
+    document.getElementById('btn-reset-view').onclick = resetView;
+    document.getElementById('btn-play').onclick = () => {
+        if (STATE.isWaitingConfirm) finishAction();
+        else if (STATE.isPaused) { STATE.isPaused = false; STATE.timer = setInterval(step, STATE.stepSpeed); updateUI(); }
+        else if (STATE.isExecuting) { STATE.isPaused = true; clearInterval(STATE.timer); updateUI(); }
+    };
+    document.getElementById('btn-next').onclick = () => {
+        if (STATE.isExecuting && !STATE.isWaitingConfirm) { STATE.isPaused = true; updateUI(); step(); }
+    };
+
+    // ============ INIT ============
+    lucide.createIcons();
+    initThree();
+    initResizers();
+    setMode('BUILD');
+    setTimeout(quickInit, 500);
+    </script>
+</body>
+</html>
