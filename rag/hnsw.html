@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- order: 7 -->
+    <!-- icon: 🚢 -->
     <title>HNSW 3D 分层算法可视化 v3.4</title>
+    <meta name="description" content="HNSW 3D 分层算法可视化 v3.4，展示HNSW图的构建和搜索过程，支持自定义参数和交互操作。">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Three.js & OrbitControls -->
@@ -192,19 +195,19 @@
             </div>
             <div class="grid grid-cols-4 gap-2">
                 <div>
-                    <label class="text-[10px] font-bold text-slate-500 block mb-1">M</label>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1" title="每个节点在每层最多拥有的邻居数量，控制图的稠密度">M</label>
                     <input type="number" id="input-m" value="3" min="2" max="8" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
                 </div>
                 <div>
-                    <label class="text-[10px] font-bold text-slate-500 block mb-1">ef</label>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1" title="搜索时的候选队列大小，值越大搜索越精确但越慢">ef</label>
                     <input type="number" id="input-ef" value="8" min="1" max="20" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
                 </div>
                 <div>
-                    <label class="text-[10px] font-bold text-slate-500 block mb-1">K</label>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1" title="返回的最近邻数量，即 Top-K 中的 K 值">K</label>
                     <input type="number" id="input-k" value="3" min="1" max="10" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
                 </div>
                 <div>
-                    <label class="text-[10px] font-bold text-slate-500 block mb-1">mL</label>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1" title="层级归一化因子，影响节点被分配到高层概率，值越小高层节点越少">mL</label>
                     <input type="number" id="input-ml" value="0.5" min="0.1" max="1" step="0.1" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
                 </div>
             </div>
@@ -212,13 +215,13 @@
              <div>
                 <div class="flex justify-between text-[10px] text-slate-500 mb-1 font-bold">
                     <span>层间距 (Layer Distance)</span>
-                    <span id="layer-val" class="font-mono bg-white border border-slate-200 px-1.5 rounded text-slate-600">70</span>
+                    <span id="layer-val" class="font-mono bg-white border border-slate-200 px-1.5 rounded text-slate-600">90</span>
                 </div>
-                <input type="range" id="layer-dist-slider" min="30" max="120" value="70" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                <input type="range" id="layer-dist-slider" min="30" max="120" value="90" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-500">
             </div>
             <div class="grid grid-cols-1 gap-2">
                 <button id="btn-quick-init" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm">
-                    <i data-lucide="zap" class="w-3 h-3"></i> 随机生成初始图 (30点)
+                    <i data-lucide="zap" class="w-3 h-3"></i> 随机生成初始图 (40点)
                 </button>
             </div>
             <div class="grid grid-cols-2 gap-2">
@@ -279,7 +282,11 @@
         const viewSize = 600;
         const aspect = container.clientWidth / container.clientHeight;
         const camera = new THREE.OrthographicCamera(-viewSize * aspect / 2, viewSize * aspect / 2, viewSize / 2, -viewSize / 2, -5000, 5000);
-        camera.position.set(200, 150, 200); // Isometric-ish view
+        
+        // Initial Position to match resetView logic (Isometric Front-Left)
+        // maxLayerY (approx for LAYERS=4) = 210. CenterY = 105.
+        // Camera Pos: 200, 205, 200. Target: 0, 105, 0.
+        camera.position.set(200, 205, 200); 
         
         const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
         renderer.setSize(container.clientWidth, container.clientHeight);
@@ -289,6 +296,10 @@
 
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
+        // Set initial target to match resetView logic
+        controls.target.set(0, 105, 0); 
+        controls.update();
+
         controls.dampingFactor = 0.05;
         controls.maxPolarAngle = Math.PI / 2 - 0.05;
         controls.minDistance = 20;
@@ -345,7 +356,7 @@
 
         // --- DATA STRUCTURES ---
         const LAYERS = 4;
-        let LAYER_Y_GAP = 70;
+        let LAYER_Y_GAP = 90;
         const LAYER_SIZE = 200; 
         
         const STATE = {
@@ -804,6 +815,9 @@
 
             node.meshes.forEach((mesh, lvl) => {
                 if(mesh) {
+                    // Enforce layer restriction for ALL highlight types if specificLayer is provided
+                    if (isSpecific && lvl !== specificLayer) return;
+
                     let applyType = type;
                     const key = `${node.id}-${lvl}`;
 
@@ -928,9 +942,9 @@
                             if (d < currDist) {
                                 curr = nb; currDist = d; changed = true;
                                 log(`Layer ${lc}: 逼近 <span class="log-highlight">#${nb.id}</span>`);
-                                highlightNode(curr, 'active');
+                                highlightNode(curr, 'active', lc);
                             } else {
-                                highlightNode(nb, 'visited');
+                                highlightNode(nb, 'visited', lc);
                                 STATE.visited.add(`${lc}-${nb.id}`);
                             }
                             yield;
@@ -951,7 +965,7 @@
                 let candidates = [curr];
                 let best = [{node: curr, dist: dist3D(newNode, curr)}];
                 let visited = new Set([curr.id]);
-                highlightNode(curr, 'visited');
+                highlightNode(curr, 'visited', lc);
                 updateLists(candidates.map(n => ({node: n, dist: dist3D(newNode, n)})), best);
                 
                 for(let step=0; step<2; step++) {
@@ -962,7 +976,7 @@
                                 let nb = getNode(nid);
                                 if(!visited.has(nb.id)) {
                                     visited.add(nb.id);
-                                    highlightNode(nb, 'visited'); 
+                                    highlightNode(nb, 'visited', lc); 
                                     nextGen.push(nb);
                                     best.push({node: nb, dist: dist3D(newNode, nb)});
                                     drawTempLine(c, nb, lc, 0x10b981); 
@@ -1028,7 +1042,7 @@
                  let changed = true;
                  while(changed) {
                      changed = false;
-                     highlightNode(curr, 'active'); 
+                     highlightNode(curr, 'active', lc); 
                      if (curr.neighbors[lc]) {
                          const neighbors = curr.neighbors[lc].map(id => getNode(id));
                          for(let nb of neighbors) {
@@ -1037,11 +1051,11 @@
                              if (d < currDist) {
                                  currDist = d; curr = nb; changed = true;
                                  log(`Layer ${lc}: 跳跃至 <span class="log-highlight">#${nb.id}</span>`);
-                                 highlightNode(curr, 'active');
-                                 highlightNode(nb, 'visited'); STATE.visited.add(nb.id);
+                                 highlightNode(curr, 'active', lc);
+                                 highlightNode(nb, 'visited', lc); STATE.visited.add(nb.id);
                                  yield; break;
                              } else {
-                                 highlightNode(nb, 'visited'); STATE.visited.add(nb.id);
+                                 highlightNode(nb, 'visited', lc); STATE.visited.add(nb.id);
                              }
                              yield;
                          }
@@ -1067,7 +1081,7 @@
                  highlightCode('ln-sl-loop');
                  frontier.sort((a,b) => a.dist - b.dist);
                  const current = frontier.shift();
-                 highlightCode('ln-sl-pop'); highlightNode(current.node, 'active'); 
+                 highlightCode('ln-sl-pop'); highlightNode(current.node, 'active', 0); 
                  
                  if (current.node.neighbors[0]) {
                      const neighbors = current.node.neighbors[0].map(id => getNode(id));
@@ -1082,7 +1096,7 @@
                              bestCandidates.sort((a,b) => a.dist - b.dist);
                              if (bestCandidates.length > CONFIG.ef) bestCandidates.pop();
                              updateLists(frontier, bestCandidates);
-                             highlightNode(nb, 'visited');
+                             highlightNode(nb, 'visited', 0);
                              yield;
                          }
                      }
@@ -1266,12 +1280,12 @@
             const btnPlay = document.getElementById('btn-play'); const btnNext = document.getElementById('btn-next');
             if(STATE.isExecuting) {
                 btnNext.disabled = false;
-                btnPlay.innerHTML = STATE.isPaused ? `<i data-lucide="play" class="w-4 h-4 fill-current"></i> <span>继续</span>` : `<i data-lucide="pause" class="w-4 h-4 fill-current"></i> <span>暂停</span>`;
-                btnPlay.className = STATE.isPaused ? "flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded font-bold text-sm transition-colors shadow-lg" : "flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded font-bold text-sm transition-colors shadow-lg";
+                btnPlay.innerHTML = STATE.isPaused ? `<i data-lucide="play" class="w-3 h-3 fill-current"></i> <span>继续</span>` : `<i data-lucide="pause" class="w-3 h-3 fill-current"></i> <span>暂停</span>`;
+                btnPlay.className = STATE.isPaused ? "flex-1 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded text-xs font-bold transition-colors shadow-sm flex items-center justify-center gap-2" : "flex-1 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded text-xs font-bold transition-colors shadow-sm flex items-center justify-center gap-2";
             } else {
                 btnNext.disabled = true;
-                btnPlay.innerHTML = `<i data-lucide="play" class="w-4 h-4 fill-current"></i> <span>自动执行</span>`;
-                btnPlay.className = "flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold text-sm transition-colors shadow-lg disabled:opacity-50";
+                btnPlay.innerHTML = `<i data-lucide="play" class="w-3 h-3 fill-current"></i> <span>自动执行</span>`;
+                btnPlay.className = "flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded text-xs font-bold transition-colors shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed";
             }
             lucide.createIcons();
         }
