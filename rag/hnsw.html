@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HNSW 3D 分层算法可视化 v3.4</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Three.js & OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f8fafc; color: #334155; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Glass Panel */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+        }
+        
+        /* Code Highlighting */
+        .code-line { padding-left: 1rem; border-left: 3px solid transparent; opacity: 0.8; transition: all 0.1s; white-space: pre; font-size: 11px; color: #475569; }
+        .code-active { background-color: #eff6ff; border-left-color: #3b82f6; color: #1d4ed8; opacity: 1; font-weight: bold; }
+
+        /* Log Highlighting */
+        .log-highlight { color: #0ea5e9; font-weight: bold; font-family: 'JetBrains Mono', monospace; }
+        .log-layer { color: #8b5cf6; font-weight: bold; }
+        .log-dist { color: #f59e0b; font-family: 'JetBrains Mono', monospace; }
+        .log-success { color: #10b981; font-weight: bold; }
+        .log-dive { color: #d946ef; font-weight: bold; }
+
+        /* Scrollbars */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+
+        /* Resizers */
+        .resizer-v { width: 4px; background-color: #cbd5e1; cursor: col-resize; transition: background-color 0.2s; z-index: 50; flex-shrink: 0; }
+        .resizer-v:hover, .resizer-v.resizing { background-color: #3b82f6; }
+        .resizer-h { height: 4px; background-color: #cbd5e1; cursor: row-resize; transition: background-color 0.2s; z-index: 50; flex-shrink: 0; width: 100%; }
+        .resizer-h:hover, .resizer-h.resizing { background-color: #3b82f6; }
+
+        /* Layer Labels */
+        .layer-label {
+            position: absolute;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            color: #64748b;
+            border: 1px solid #e2e8f0;
+            pointer-events: none;
+            transition: top 0.1s, opacity 0.2s;
+            transform: translateY(-50%);
+        }
+        .layer-label.active { background: #eff6ff; border-color: #bfdbfe; color: #2563eb; }
+        .layer-label.inactive { opacity: 0.5; }
+
+        /* Loading Overlay */
+        #loading { position: fixed; inset: 0; background: #f8fafc; z-index: 9999; display: flex; justify-content: center; align-items: center; transition: opacity 0.5s; }
+    </style>
+</head>
+<body class="h-screen flex overflow-hidden text-slate-600">
+
+    <div id="loading"><div class="animate-spin rounded-full h-12 w-12 border-b-4 border-blue-500"></div></div>
+
+    <!-- LEFT: Code & Log -->
+    <aside class="w-[400px] flex flex-col border-r border-slate-200 z-10 glass-panel transition-all relative" id="left-panel">
+        <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50/50">
+            <h2 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+                <i data-lucide="code" class="w-4 h-4 text-blue-600"></i> HNSW 核心逻辑
+            </h2>
+            <span id="layer-indicator" class="text-[10px] px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 border border-indigo-200 font-mono font-bold">Layer: -</span>
+        </div>
+        
+        <div class="flex-1 overflow-auto py-4 mono leading-relaxed custom-scrollbar bg-white" id="code-area">
+            <!-- INSERT LOGIC -->
+            <div id="code-insert" class="mb-6">
+                <div class="px-4 text-emerald-600 font-bold mb-2 text-xs bg-emerald-50 py-1 mx-2 rounded border border-emerald-100"># 插入节点 (Insert)</div>
+                <div id="ln-ins-def" class="code-line">def insert(q, M, M_max):</div>
+                <div id="ln-ins-level" class="code-line pl-4">L = get_random_level()</div>
+                <div id="ln-ins-entry" class="code-line pl-4">curr_node = entry_point</div>
+                <div class="code-line pl-4 text-slate-400"># 阶段1: 快速下潜 (Zoom-in)</div>
+                <div id="ln-ins-p1-loop" class="code-line pl-4"><span class="text-purple-600">for</span> lc <span class="text-purple-600">in</span> range(L_max, L, -1):</div>
+                <div id="ln-ins-p1-search" class="code-line pl-8">curr_node = search_layer(q, curr_node, 1, lc)</div>
+                <div class="code-line pl-4 text-slate-400"># 阶段2: 逐层构建 (Construction)</div>
+                <div id="ln-ins-p2-loop" class="code-line pl-4"><span class="text-purple-600">for</span> lc <span class="text-purple-600">in</span> range(min(L_max, L), -1, -1):</div>
+                <div id="ln-ins-p2-search" class="code-line pl-8">neighbors = search_layer(q, curr_node, ef, lc)</div>
+                <div id="ln-ins-p2-select" class="code-line pl-8">neighbors = select_neighbors(neighbors, M)</div>
+                <div id="ln-ins-p2-conn" class="code-line pl-8">add_connections(q, neighbors, lc)</div>
+                <div id="ln-ins-p2-entry" class="code-line pl-8">curr_node = q</div>
+                <div id="ln-ins-update-ep" class="code-line pl-4"><span class="text-purple-600">if</span> L > L_max: entry_point = q</div>
+            </div>
+
+            <!-- SEARCH LOGIC -->
+            <div id="code-search" class="mb-6 hidden">
+                <div class="px-4 text-amber-600 font-bold mb-2 text-xs bg-amber-50 py-1 mx-2 rounded border border-amber-100"># 搜索 (KNN Query)</div>
+                <div id="ln-q-def" class="code-line">def search_knn(q, K):</div>
+                <div id="ln-q-entry" class="code-line pl-4">curr_node = entry_point</div>
+                <div class="code-line pl-4 text-slate-400"># 阶段1: 顶层下潜</div>
+                <div id="ln-q-p1-loop" class="code-line pl-4"><span class="text-purple-600">for</span> lc <span class="text-purple-600">in</span> range(L_max, 0, -1):</div>
+                <div id="ln-q-p1-greedy" class="code-line pl-8">curr_node = search_layer(q, curr_node, 1, lc)</div>
+                <div class="code-line pl-4 text-slate-400"># 阶段2: 底层精搜</div>
+                <div id="ln-q-p2-search" class="code-line pl-4">candidates = search_layer(q, curr_node, ef, 0)</div>
+                <div id="ln-q-return" class="code-line pl-4"><span class="text-purple-600">return</span> top_k(candidates, K)</div>
+            </div>
+
+            <!-- SEARCH_LAYER DETAIL -->
+            <div class="mt-6 border-t border-slate-200 pt-4 bg-slate-50/30">
+                <div class="px-4 text-blue-600 font-bold mb-2 text-xs"># 贪心搜索细节 (search_layer)</div>
+                <div id="ln-sl-def" class="code-line">def search_layer(q, entry, ef, lc):</div>
+                <div id="ln-sl-init" class="code-line pl-4">candidates = [entry]</div>
+                <div id="ln-sl-visit" class="code-line pl-4">visited = {entry}</div>
+                <div id="ln-sl-loop" class="code-line pl-4"><span class="text-pink-600">while</span> candidates:</div>
+                <div id="ln-sl-pop" class="code-line pl-8">curr = get_closest(candidates, q)</div>
+                <div id="ln-sl-prune" class="code-line pl-8"><span class="text-pink-600">if</span> dist(curr, q) > dist(furthest, q): <span class="text-pink-600">break</span></div>
+                <div id="ln-sl-nb" class="code-line pl-8"><span class="text-pink-600">for</span> nb <span class="text-pink-600">in</span> curr.neighbors[lc]:</div>
+                <div id="ln-sl-update" class="code-line pl-12"><span class="text-pink-600">if</span> nb <span class="text-pink-600">not in</span> visited: candidates.add(nb)</div>
+                <div id="ln-sl-ret" class="code-line pl-4"><span class="text-pink-600">return</span> top_ef(candidates)</div>
+            </div>
+        </div>
+        
+        <div id="resizer-left-split" class="resizer-h border-t border-slate-200 bg-slate-50"></div>
+
+        <!-- Logger -->
+        <div id="log-panel" class="bg-white flex flex-col min-h-[100px]" style="height: 160px;">
+            <div class="px-3 py-1 text-[10px] text-slate-500 uppercase font-bold bg-slate-50 border-b border-slate-200 flex-shrink-0">执行日志</div>
+            <div id="log-container" class="flex-1 overflow-y-auto p-3 mono text-[10px] text-slate-600 space-y-1.5 custom-scrollbar bg-white">
+                <div class="italic text-slate-400">系统就绪。</div>
+            </div>
+        </div>
+    </aside>
+    
+    <div id="resizer-col-1" class="resizer-v"></div>
+
+    <!-- CENTER: 3D Canvas -->
+    <main class="flex-1 relative overflow-hidden min-w-[300px]">
+        <div id="canvas-container" class="w-full h-full outline-none"></div>
+        
+        <!-- Layer Labels (HTML Overlay) -->
+        <div id="layer-labels-container" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
+
+        <!-- Prune Indicator -->
+        <div id="prune-indicator" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-0 transition-opacity duration-300 flex flex-col items-center z-30">
+            <div class="bg-red-500 text-white rounded-full p-2 shadow-lg"><i data-lucide="scissors" class="w-6 h-6"></i></div>
+            <span class="bg-red-100 text-red-800 text-xs font-bold px-2 py-1 rounded mt-1 border border-red-200 shadow-sm">Pruned</span>
+        </div>
+
+        <!-- Legend (Floating) -->
+        <div class="absolute bottom-4 right-4 glass-panel px-3 py-2 rounded-lg text-[10px] space-y-1.5 pointer-events-none z-20 select-none shadow-sm border border-slate-200 text-slate-600">
+            <div class="font-bold text-slate-800 mb-1 pb-1 border-b border-slate-200">图例说明</div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> <span class="text-slate-600">已访问 (Visited)</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-slate-300"></span> <span class="text-slate-600">未访问 (Unvisited)</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-purple-600 border border-purple-300"></span> <span class="text-slate-800 font-bold">入口点 (Entry)</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 border border-emerald-200"></span> <span class="text-slate-600">新节点 (New)</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_4px_red]"></span> <span class="text-slate-800 font-bold">目标 / 查询点</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-yellow-400 border border-yellow-600"></span> <span class="text-slate-800 font-bold">当前焦点 (Curr)</span></div>
+            <div class="flex items-center gap-2"><span class="w-8 h-0.5 bg-orange-400 dashed"></span> <span class="text-slate-600">搜索路径</span></div>
+            <div class="flex items-center gap-2"><span class="w-8 h-0.5 bg-green-500"></span> <span class="text-slate-800 font-bold">最终连线/结果</span></div>
+        </div>
+    </main>
+    
+    <div id="resizer-col-2" class="resizer-v"></div>
+
+    <!-- RIGHT: Controls -->
+    <aside id="right-panel" class="bg-white border-l border-slate-200 flex flex-col z-10 shadow-xl" style="width: 320px; min-width: 260px;">
+        <div class="p-4 bg-slate-50 border-b border-slate-200 space-y-4 flex-shrink-0">
+            <div>
+                <label class="text-xs font-bold text-slate-500 uppercase block mb-2">当前模式</label>
+                <div class="flex bg-white border border-slate-300 rounded overflow-hidden">
+                    <button id="btn-mode-build" class="flex-1 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 transition-colors">
+                        <i data-lucide="plus-circle" class="w-3 h-3 inline mr-1"></i> 建图
+                    </button>
+                    <div class="w-px bg-slate-200"></div>
+                    <button id="btn-mode-search" class="flex-1 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors">
+                        <i data-lucide="search" class="w-3 h-3 inline mr-1"></i> 搜索
+                    </button>
+                </div>
+                <div id="mode-instruction" class="mt-2 p-2 bg-blue-50 border border-blue-100 rounded text-[10px] text-blue-800 leading-tight flex items-start gap-1.5">
+                    <i data-lucide="mouse-pointer" class="w-3 h-3 flex-shrink-0 mt-0.5 text-blue-500"></i>
+                    <span id="mode-instruction-text">请在 <b>网格区域点击</b> 以添加新节点。</span>
+                </div>
+            </div>
+            <div class="grid grid-cols-4 gap-2">
+                <div>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">M</label>
+                    <input type="number" id="input-m" value="3" min="2" max="8" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">ef</label>
+                    <input type="number" id="input-ef" value="8" min="1" max="20" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">K</label>
+                    <input type="number" id="input-k" value="3" min="1" max="10" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-slate-500 block mb-1">mL</label>
+                    <input type="number" id="input-ml" value="0.5" min="0.1" max="1" step="0.1" class="w-full px-1 py-1 text-xs border border-slate-300 rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none">
+                </div>
+            </div>
+            <!-- 层间距 -->
+             <div>
+                <div class="flex justify-between text-[10px] text-slate-500 mb-1 font-bold">
+                    <span>层间距 (Layer Distance)</span>
+                    <span id="layer-val" class="font-mono bg-white border border-slate-200 px-1.5 rounded text-slate-600">70</span>
+                </div>
+                <input type="range" id="layer-dist-slider" min="30" max="120" value="70" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-500">
+            </div>
+            <div class="grid grid-cols-1 gap-2">
+                <button id="btn-quick-init" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm">
+                    <i data-lucide="zap" class="w-3 h-3"></i> 随机生成初始图 (30点)
+                </button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+                <button id="btn-reset" class="bg-white border border-slate-300 hover:bg-red-50 text-slate-700 hover:text-red-600 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm">
+                    <i data-lucide="trash-2" class="w-3 h-3"></i> 清空
+                </button>
+                <button id="btn-reset-view" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors shadow-sm">
+                    <i data-lucide="maximize" class="w-3 h-3"></i> 重置视角
+                </button>
+            </div>
+            <div class="flex items-center gap-2">
+                <button id="btn-play" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded text-xs font-bold transition-colors shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <i data-lucide="play" class="w-3 h-3 fill-current"></i><span>自动执行</span>
+                </button>
+                <button id="btn-next" disabled class="px-3 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded text-xs font-bold transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                    <i data-lucide="step-forward" class="w-3 h-3"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Lists (White Theme) -->
+        
+        <!-- Results (Middle) -->
+        <div id="results-panel" class="flex flex-col border-b border-slate-100 min-h-[80px]" style="height: 140px;">
+            <div class="px-4 py-2 bg-green-50 border-b border-green-100 flex justify-between items-center flex-shrink-0">
+                <span class="text-xs font-bold text-green-700 flex items-center gap-1"><i data-lucide="check-circle" class="w-3 h-3"></i> Results (Top K)</span>
+            </div>
+            <div id="list-results" class="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar bg-white">
+                <div class="text-xs text-slate-300 text-center mt-4 italic">Empty</div>
+            </div>
+        </div>
+
+        <div id="resizer-right-split" class="resizer-h border-t border-slate-200 bg-slate-50"></div>
+
+        <!-- Frontier (Bottom) -->
+        <div id="frontier-panel" class="flex-1 flex flex-col min-h-[80px]">
+            <div class="px-4 py-2 bg-amber-50 border-b border-amber-100 flex justify-between items-center flex-shrink-0">
+                <span class="text-xs font-bold text-amber-700 flex items-center gap-1"><i data-lucide="list" class="w-3 h-3"></i> Frontier (MinHeap)</span>
+            </div>
+            <div id="list-frontier" class="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar bg-white">
+                <div class="text-xs text-slate-300 text-center mt-4 italic">Empty</div>
+            </div>
+        </div>
+        
+        <!-- Status -->
+        <div class="h-8 border-t border-slate-200 bg-slate-50 flex items-center justify-between px-4 text-[10px] text-slate-400 flex-shrink-0">
+            <span id="status-nodes">Nodes: 0</span>
+            <span id="status-maxlayer">Max Layer: 0</span>
+        </div>
+    </aside>
+
+    <script>
+        // --- THREE.JS SETUP ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff); 
+
+        const container = document.getElementById('canvas-container');
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 2000);
+        camera.position.set(0, 160, 250); 
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05;
+        controls.minDistance = 20;
+        controls.maxDistance = 800;
+        
+        // Function to reset view
+        function resetView() {
+            controls.reset();
+            // Adjust camera to fit all layers with padding
+            const maxLayerY = (LAYERS - 1) * LAYER_Y_GAP;
+            const centerX = 0;
+            const centerZ = 0;
+            const centerY = maxLayerY / 2;
+
+            // Position camera further back and up to see everything
+            camera.position.set(0, centerY + 200, 350); 
+            controls.target.set(centerX, centerY, centerZ);
+            controls.update();
+        }
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        dirLight.position.set(100, 200, 50);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // Groups
+        const graphEdgeGroup = new THREE.Group();
+        scene.add(graphEdgeGroup);
+        const verticalLineGroup = new THREE.Group();
+        scene.add(verticalLineGroup);
+        const nodeGroup = new THREE.Group(); 
+        scene.add(nodeGroup);
+        const layerPlaneGroup = new THREE.Group(); 
+        scene.add(layerPlaneGroup);
+        const tempGroup = new THREE.Group(); 
+        scene.add(tempGroup);
+        const connectionGroup = new THREE.Group(); 
+        scene.add(connectionGroup);
+        const queryGroup = new THREE.Group();
+        scene.add(queryGroup);
+
+        // Raycaster
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const planeGeo = new THREE.PlaneGeometry(300, 300);
+        const planeMat = new THREE.MeshBasicMaterial({ visible: false }); 
+        const clickPlane = new THREE.Mesh(planeGeo, planeMat);
+        clickPlane.rotation.x = -Math.PI / 2;
+        scene.add(clickPlane);
+
+        // --- DATA STRUCTURES ---
+        const LAYERS = 4;
+        let LAYER_Y_GAP = 70;
+        const LAYER_SIZE = 200; 
+        
+        const STATE = {
+            nodes: [],      
+            entryPoint: null,
+            mode: 'BUILD', 
+            isExecuting: false, isPaused: false, isWaitingConfirm: false,
+            generator: null, timer: null, stepSpeed: 400,
+            frontier: [], results: [], visited: new Set(),
+            gridHelpers: [],
+            layerObjects: [], 
+            activeHighlights: [], 
+            activeConnections: new Set(),
+            queryNode: null // Object holding query visual meshes
+        };
+
+        let CONFIG = { M: 3, ef: 5, k: 3, levelMult: 1.0 };
+
+        // Constants for colors
+        const COLORS = {
+            NODE_DEFAULT: 0xcbd5e1, 
+            NODE_VISITED: 0x3b82f6, 
+            NODE_ENTRY: 0x7c3aed,   
+            NODE_ACTIVE: 0xfacc15,  
+            NODE_NEW: 0xec4899,     
+            NODE_RESULT: 0x10b981,  
+            EDGE_DEFAULT: 0x94a3b8,
+            EDGE_NEW: 0x10b981,
+            QUERY_COLOR: 0xef4444
+        };
+
+        // --- RESIZERS ---
+        function initResizers() {
+            const makeResizableCol = (resizer, leftEl, rightEl, isLeftResizer) => {
+                let isResizing = false;
+                resizer.addEventListener('mousedown', e => { isResizing = true; document.body.style.cursor = 'col-resize'; resizer.classList.add('bg-blue-500'); });
+                window.addEventListener('mousemove', e => {
+                    if (!isResizing) return;
+                    e.preventDefault();
+                    if (isLeftResizer) { const newW = Math.max(300, Math.min(800, e.clientX)); leftEl.style.width = `${newW}px`; } 
+                    else { const newW = Math.max(280, Math.min(600, window.innerWidth - e.clientX)); rightEl.style.width = `${newW}px`; }
+                    camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(container.clientWidth, container.clientHeight);
+                });
+                window.addEventListener('mouseup', () => { isResizing = false; document.body.style.cursor = ''; resizer.classList.remove('bg-blue-500'); });
+            };
+            makeResizableCol(document.getElementById('resizer-col-1'), document.getElementById('left-panel'), null, true);
+            makeResizableCol(document.getElementById('resizer-col-2'), null, document.getElementById('right-panel'), false);
+            
+            const makeResizableRow = (resizer, topEl, containerEl) => {
+                let isResizing = false;
+                resizer.addEventListener('mousedown', e => { isResizing = true; document.body.style.cursor = 'row-resize'; resizer.classList.add('bg-blue-500'); });
+                window.addEventListener('mousemove', e => {
+                    if (!isResizing) return; e.preventDefault();
+                    const containerRect = containerEl.getBoundingClientRect();
+                    const newH = Math.max(100, Math.min(containerRect.height - 100, containerRect.bottom - e.clientY));
+                    topEl.style.height = `${newH}px`;
+                });
+                window.addEventListener('mouseup', () => { isResizing = false; document.body.style.cursor = ''; resizer.classList.remove('bg-blue-500'); });
+            };
+            makeResizableRow(document.getElementById('resizer-left-split'), document.getElementById('log-panel'), document.getElementById('left-panel'));
+            
+             const makeResizableRowTop = (resizer, topEl) => {
+                 let isResizing = false;
+                 resizer.addEventListener('mousedown', e => { isResizing = true; document.body.style.cursor = 'row-resize'; resizer.classList.add('bg-blue-500'); });
+                 window.addEventListener('mousemove', e => {
+                    if (!isResizing) return; e.preventDefault();
+                    const rect = topEl.getBoundingClientRect();
+                    const newH = Math.max(80, e.clientY - rect.top);
+                    topEl.style.height = `${newH}px`;
+                 });
+                 window.addEventListener('mouseup', () => { isResizing = false; document.body.style.cursor = ''; resizer.classList.remove('bg-blue-500'); });
+            };
+            makeResizableRowTop(document.getElementById('resizer-right-split'), document.getElementById('results-panel'));
+        }
+
+        // --- INPUT HANDLING ---
+        function updateConfig() {
+            const mVal = parseInt(document.getElementById('input-m').value) || 3;
+            const efVal = parseInt(document.getElementById('input-ef').value) || 6;
+            const kVal = parseInt(document.getElementById('input-k').value) || 3;
+            CONFIG.M = Math.max(1, mVal);
+            CONFIG.efConstruction = Math.max(1, efVal);
+            CONFIG.k = Math.max(1, kVal);
+        }
+        document.getElementById('input-m').addEventListener('change', updateConfig);
+        document.getElementById('input-ef').addEventListener('change', updateConfig);
+        document.getElementById('input-k').addEventListener('change', updateConfig);
+        document.getElementById('input-ml').addEventListener('change', (e) => {
+            CONFIG.levelMult = parseFloat(e.target.value) || 0.5;
+        });
+
+
+        // --- VISUAL HELPERS ---
+        
+        function createRoundedRectShape(width, height, radius) {
+            const ctx = new THREE.Shape();
+            const x = -width/2, y = -height/2;
+            ctx.moveTo(x, y + radius);
+            ctx.lineTo(x, y + height - radius);
+            ctx.quadraticCurveTo(x, y + height, x + radius, y + height);
+            ctx.lineTo(x + width - radius, y + height);
+            ctx.quadraticCurveTo(x + width, y + height, x + width, y + height - radius);
+            ctx.lineTo(x + width, y + radius);
+            ctx.quadraticCurveTo(x + width, y, x + width - radius, y);
+            ctx.lineTo(x + radius, y);
+            ctx.quadraticCurveTo(x, y, x, y + radius);
+            return ctx;
+        }
+
+        function initLayers() {
+            STATE.gridHelpers = [];
+            STATE.layerObjects = [];
+            layerPlaneGroup.clear();
+            const labelContainer = document.getElementById('layer-labels-container');
+            labelContainer.innerHTML = '';
+
+            for (let i = 0; i < LAYERS; i++) {
+                const size = LAYER_SIZE;
+                const divisions = 20;
+                const colorCenter = 0xe2e8f0; 
+                const colorGrid = 0xe2e8f0;   
+                
+                const grid = new THREE.GridHelper(size, divisions, colorCenter, colorGrid);
+                grid.position.y = i * LAYER_Y_GAP;
+                grid.material.transparent = true;
+                grid.material.opacity = 0.3;
+                layerPlaneGroup.add(grid);
+                STATE.gridHelpers.push(grid);
+
+                const shape = createRoundedRectShape(size + 4, size + 4, 10);
+                const points = shape.getPoints();
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                geometry.rotateX(Math.PI / 2);
+                
+                const material = new THREE.LineBasicMaterial({ 
+                    color: i === 0 ? 0x3b82f6 : 0x6366f1, 
+                    opacity: i === 0 ? 0.6 : 0.3,
+                    transparent: true,
+                    linewidth: 2
+                });
+                
+                const border = new THREE.Line(geometry, material);
+                border.position.y = i * LAYER_Y_GAP;
+                layerPlaneGroup.add(border);
+
+                const fillGeo = new THREE.ShapeGeometry(shape);
+                fillGeo.rotateX(Math.PI / 2);
+                const fillMat = new THREE.MeshBasicMaterial({ 
+                    color: 0xffffff, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false 
+                });
+                const fillMesh = new THREE.Mesh(fillGeo, fillMat);
+                fillMesh.position.y = i * LAYER_Y_GAP;
+                layerPlaneGroup.add(fillMesh);
+
+                const label = document.createElement('div');
+                label.className = 'layer-label shadow-sm';
+                label.innerText = `Layer ${i}`;
+                label.dataset.layerIndex = i;
+                labelContainer.appendChild(label);
+
+                STATE.layerObjects[i] = { grid, border, fill: fillMesh, label };
+            }
+        }
+        initLayers();
+
+        function updateLayerVisuals(activeLayer) {
+            STATE.layerObjects.forEach((obj, i) => {
+                const isFocused = (activeLayer === null) || (i === activeLayer);
+                obj.grid.material.opacity = isFocused ? 0.3 : 0.05;
+                obj.border.material.opacity = isFocused ? (i===0?0.5:0.3) : 0.05;
+                obj.fill.material.opacity = isFocused ? 0.1 : 0.02;
+                
+                if (activeLayer !== null) {
+                    obj.label.classList.toggle('active', i === activeLayer);
+                    obj.label.style.opacity = (i === activeLayer) ? 1 : 0.3;
+                } else {
+                    obj.label.classList.remove('active');
+                    obj.label.style.opacity = 0.9;
+                }
+            });
+
+            STATE.nodes.forEach(node => {
+                node.meshes.forEach((mesh, lvl) => {
+                    if (mesh) {
+                        const isFocused = (activeLayer === null) || (lvl === activeLayer);
+                        
+                        // Special case: If this node is the one currently being inserted/active (highlighted as new-node or active)
+                        // We should keep it opaque even if it's not in the active layer?
+                        // User said: "New node... keep opaque".
+                        // We can check if this mesh is in STATE.activeHighlights?
+                        const isHighlighted = STATE.activeHighlights.includes(mesh);
+                        
+                        if (isHighlighted) {
+                            mesh.material.opacity = 1.0;
+                            mesh.material.transparent = false;
+                        } else {
+                            mesh.material.opacity = isFocused ? 1.0 : 0.1;
+                            mesh.material.transparent = !isFocused;
+                        }
+                        mesh.material.needsUpdate = true;
+                    }
+                });
+            });
+            
+            graphEdgeGroup.children.forEach(line => {
+                const layer = line.userData.layer;
+                const isFocused = (activeLayer === null) || (layer === activeLayer);
+                
+                line.material.opacity = isFocused ? 0.4 : 0.05;
+                line.material.transparent = true;
+                line.material.needsUpdate = true;
+            });
+            
+             // Update Connection Group (This contains the Green/Highlighted lines during construction)
+            connectionGroup.children.forEach(line => {
+                 const layer = line.userData.layer;
+                 
+                 // Vertical drops don't have a 'layer' in userData usually, or we need to check type
+                 if (line.userData.type === 'vertical-drop') {
+                     line.material.opacity = 0.8;
+                     line.material.transparent = true;
+                 } else {
+                     // Normal connection lines
+                     line.material.opacity = 1.0; // Always opaque for active connections
+                     line.material.transparent = false; // Force opaque
+                 }
+                 line.material.needsUpdate = true;
+            });
+        }
+
+        function updateLayerDist(val) {
+            LAYER_Y_GAP = parseInt(val);
+            document.getElementById('layer-val').innerText = val;
+            
+            STATE.layerObjects.forEach((obj, i) => {
+                const y = i * LAYER_Y_GAP;
+                obj.grid.position.y = y;
+                obj.border.position.y = y;
+                obj.fill.position.y = y;
+            });
+            
+            STATE.nodes.forEach(node => {
+                node.meshes.forEach((mesh, lvl) => {
+                    if (mesh) mesh.position.y = lvl * LAYER_Y_GAP;
+                });
+                if (node.maxLevel > 0) updateVerticalLines(node);
+            });
+            
+            // Update Query Node Visuals
+            if (STATE.queryNode) {
+                STATE.queryNode.meshes.forEach((mesh, lvl) => {
+                    mesh.position.y = lvl * LAYER_Y_GAP;
+                });
+                updateVerticalLines(STATE.queryNode, true);
+            }
+            
+            // Update Green Connections (Persistent highlights)
+            connectionGroup.children.forEach(line => {
+                if (line.userData.type === 'connection') {
+                    const { layer } = line.userData;
+                    const y = layer * LAYER_Y_GAP;
+                    const positions = line.geometry.attributes.position.array;
+                    positions[1] = y; // Start Y
+                    positions[4] = y; // End Y
+                    line.geometry.attributes.position.needsUpdate = true;
+                } else if (line.userData.type === 'vertical-drop') {
+                    // Update vertical drops
+                    const { fromL, toL } = line.userData;
+                    const y1 = fromL * LAYER_Y_GAP;
+                    const y2 = toL * LAYER_Y_GAP;
+                    const positions = line.geometry.attributes.position.array;
+                    positions[1] = y1; 
+                    positions[4] = y2;
+                    line.geometry.attributes.position.needsUpdate = true;
+                }
+            });
+
+            clearTempVisuals();
+            redrawGraphEdges();
+            updateLayerLabelPositions();
+        }
+
+        document.getElementById('layer-dist-slider').addEventListener('input', (e) => updateLayerDist(e.target.value));
+
+        // --- CORE UTILS ---
+
+        function addGraphEdge(n1, n2, layer) {
+            const y = layer * LAYER_Y_GAP;
+            const points = [
+                new THREE.Vector3(n1.x, y, n1.z),
+                new THREE.Vector3(n2.x, y, n2.z)
+            ];
+            const geo = new THREE.BufferGeometry().setFromPoints(points);
+            const mat = new THREE.LineBasicMaterial({ color: COLORS.EDGE_DEFAULT, opacity: 0.4, transparent: true });
+            const line = new THREE.Line(geo, mat);
+            line.userData.layer = layer;
+            graphEdgeGroup.add(line);
+        }
+
+        function redrawGraphEdges() {
+            graphEdgeGroup.clear();
+            STATE.nodes.forEach(node => {
+                node.neighbors.forEach((neighborsInLayer, layerIndex) => {
+                    neighborsInLayer.forEach(neighborId => {
+                        if (node.id < neighborId) {
+                            const neighbor = getNode(neighborId);
+                            if (neighbor) addGraphEdge(node, neighbor, layerIndex);
+                        }
+                    });
+                });
+            });
+        }
+
+        function updateVerticalLines(node, isQuery = false) {
+             if (node.verticalLine) {
+                 if (isQuery) queryGroup.remove(node.verticalLine);
+                 else verticalLineGroup.remove(node.verticalLine);
+                 if(node.verticalLine.geometry) node.verticalLine.geometry.dispose();
+                 node.verticalLine = null;
+             }
+             
+             const topY = isQuery ? (LAYERS - 1) * LAYER_Y_GAP : node.maxLevel * LAYER_Y_GAP;
+             const points = [
+                 new THREE.Vector3(node.x, 0, node.z),
+                 new THREE.Vector3(node.x, topY, node.z)
+             ];
+             const geo = new THREE.BufferGeometry().setFromPoints(points);
+             const mat = new THREE.LineDashedMaterial({ 
+                 color: isQuery ? COLORS.QUERY_COLOR : COLORS.EDGE_DEFAULT, 
+                 dashSize: 3, gapSize: 2, 
+                 opacity: isQuery ? 0.8 : 0.6, 
+                 transparent: true 
+             });
+             const line = new THREE.Line(geo, mat);
+             line.computeLineDistances();
+             
+             if (isQuery) queryGroup.add(line);
+             else verticalLineGroup.add(line);
+             
+             node.verticalLine = line;
+        }
+
+        function dist3D(n1, n2) { return Math.sqrt((n1.x - n2.x)**2 + (n1.z - n2.z)**2); }
+        function getRandomLevel() {
+            let level = 0;
+            while (Math.random() < 0.5 * CONFIG.levelMult && level < LAYERS - 1) level++;
+            return level;
+        }
+        function getNode(id) { return STATE.nodes.find(n => n.id === id); }
+
+        // --- VISUAL HIGHLIGHTS ---
+        
+        function createNodeVisuals(node) {
+            const geo = new THREE.SphereGeometry(2.5, 16, 16);
+            const mat = new THREE.MeshLambertMaterial({ color: COLORS.NODE_DEFAULT }); 
+            for (let i = 0; i <= node.maxLevel; i++) {
+                const mesh = new THREE.Mesh(geo, mat.clone());
+                mesh.position.set(node.x, i * LAYER_Y_GAP, node.z);
+                mesh.userData = { id: node.id, layer: i };
+                mesh.castShadow = true;
+                nodeGroup.add(mesh);
+                node.meshes[i] = mesh;
+            }
+            if (node.maxLevel > 0) updateVerticalLines(node);
+        }
+
+        function createQueryNodeVisuals(x, z) {
+            const qNode = { x, z, meshes: [], verticalLine: null, maxLevel: LAYERS-1 }; 
+            const geo = new THREE.SphereGeometry(2.0, 16, 16);
+            const mat = new THREE.MeshLambertMaterial({ color: COLORS.QUERY_COLOR, transparent: true, opacity: 0.9 });
+            
+            for (let i = 0; i < LAYERS; i++) {
+                const mesh = new THREE.Mesh(geo, mat.clone());
+                mesh.position.set(x, i * LAYER_Y_GAP, z);
+                queryGroup.add(mesh);
+                qNode.meshes[i] = mesh;
+            }
+            updateVerticalLines(qNode, true); 
+            return qNode;
+        }
+
+        function drawTempLine(n1, n2, layer, color) {
+            const y = layer * LAYER_Y_GAP;
+            const points = [new THREE.Vector3(n1.x, y, n1.z), new THREE.Vector3(n2.x, y, n2.z)];
+            const geo = new THREE.BufferGeometry().setFromPoints(points);
+            const mat = new THREE.LineBasicMaterial({ color: color, linewidth: 3 });
+            const line = new THREE.Line(geo, mat);
+            line.position.y = 0.5; 
+            tempGroup.add(line);
+            return line;
+        }
+        
+        function drawConnectionLine(n1, n2, layer) {
+            const y = layer * LAYER_Y_GAP;
+            const points = [new THREE.Vector3(n1.x, y, n1.z), new THREE.Vector3(n2.x, y, n2.z)];
+            const geo = new THREE.BufferGeometry().setFromPoints(points);
+            const mat = new THREE.LineBasicMaterial({ color: COLORS.NODE_RESULT, linewidth: 4 }); // Green thick
+            const line = new THREE.Line(geo, mat);
+            line.position.y = 0.6; 
+            line.userData = { type: 'connection', layer }; // Metadata for updating
+            connectionGroup.add(line); 
+            return line;
+        }
+
+        function drawVerticalDrop(node, fromL, toL) {
+            const points = [
+                new THREE.Vector3(node.x, fromL * LAYER_Y_GAP, node.z),
+                new THREE.Vector3(node.x, toL * LAYER_Y_GAP, node.z)
+            ];
+            const geo = new THREE.BufferGeometry().setFromPoints(points);
+            const mat = new THREE.LineBasicMaterial({ color: 0xd946ef, linewidth: 4 });
+            const line = new THREE.Line(geo, mat);
+            // Add to connectionGroup so it persists until explicit clear, instead of tempGroup
+            line.userData = { type: 'vertical-drop', fromL, toL }; // Store data to update if needed
+            connectionGroup.add(line);
+            return line;
+        }
+
+        function clearTempVisuals() {
+            tempGroup.clear(); 
+        }
+
+        function highlightNode(node, type, specificLayer = null) {
+            const isSpecific = specificLayer !== null;
+
+            node.meshes.forEach((mesh, lvl) => {
+                if(mesh) {
+                    let applyType = type;
+                    const key = `${node.id}-${lvl}`;
+
+                    // Priority: If node is a connection in current action, keep it Green (don't overwrite with Visited Blue)
+                    if (type === 'visited' && STATE.activeConnections.has(key)) {
+                        applyType = 'new-connection';
+                    }
+
+                    // If setting new-connection, enforce layer restriction
+                    if (applyType === 'new-connection') {
+                        if (isSpecific && lvl !== specificLayer) return; // Skip other layers
+                        STATE.activeConnections.add(key);
+                    }
+                    
+                    const color = applyType === 'entry' ? COLORS.NODE_ENTRY : 
+                                  applyType === 'active' ? COLORS.NODE_ACTIVE : 
+                                  applyType === 'result' ? COLORS.NODE_RESULT : 
+                                  applyType === 'new-node' ? COLORS.NODE_NEW : 
+                                  applyType === 'new-connection' ? COLORS.NODE_RESULT : 
+                                  applyType === 'visited' ? COLORS.NODE_VISITED : COLORS.NODE_DEFAULT;
+
+                    mesh.material.color.setHex(color);
+                    if(applyType === 'active' || applyType === 'result' || applyType === 'new-node') mesh.scale.set(1.5, 1.5, 1.5);
+                    else if (applyType === 'visited' || applyType === 'new-connection') mesh.scale.set(1.0, 1.0, 1.0);
+                    
+                    if (applyType !== 'entry' && applyType !== 'visited') STATE.activeHighlights.push(mesh);
+                }
+            });
+            
+            // Only highlight vertical line for new-node
+            if (type === 'new-node' && node.verticalLine) {
+                 node.verticalLine.material.color.setHex(COLORS.NODE_NEW);
+                 node.verticalLine.material.opacity = 1;
+                 STATE.activeHighlights.push(node.verticalLine); 
+            }
+        }
+        
+        function resetHighlights() {
+            STATE.nodes.forEach(node => {
+                // Reset visited status when we are truly done (in Search mode Final step)
+                // But for intermediate visual updates during execution, we want visited blue to stay.
+                // This function resets ephemeral highlights (active yellow, new green).
+                
+                const isVisited = STATE.visited.has(node.id);
+                const isEntry = node === STATE.entryPoint;
+                const baseColor = isEntry ? COLORS.NODE_ENTRY : (isVisited ? COLORS.NODE_VISITED : COLORS.NODE_DEFAULT);
+                
+                node.meshes.forEach(m => {
+                    m.material.color.setHex(baseColor);
+                    m.scale.set(1,1,1);
+                    m.material.opacity = 1.0;
+                    m.material.transparent = false;
+                });
+                
+                if (node.verticalLine) {
+                    node.verticalLine.material.color.setHex(COLORS.EDGE_DEFAULT);
+                    node.verticalLine.material.opacity = 0.6;
+                }
+            });
+            STATE.activeHighlights = [];
+        }
+
+        // --- GENERATORS ---
+
+        function* genInsert(x, z) {
+            const level = getRandomLevel();
+            const newNode = { 
+                id: STATE.nodes.length + 1, x, z, maxLevel: level, 
+                neighbors: Array(level + 1).fill().map(() => []), meshes: [], verticalLine: null 
+            };
+
+            log(`添加节点 <span class="log-highlight">#${newNode.id}</span>, 最高层: <span class="log-layer">Layer ${level}</span>`);
+            highlightCode('ln-ins-def');
+            
+            createNodeVisuals(newNode);
+            STATE.nodes.push(newNode);
+            highlightNode(newNode, 'new-node');
+            updateStats();
+            yield;
+
+            if (!STATE.entryPoint) {
+                STATE.entryPoint = newNode;
+                highlightCode('ln-ins-update-ep');
+                log("首节点设为全局入口点");
+                highlightNode(newNode, 'entry');
+                yield; return;
+            }
+
+            let curr = STATE.entryPoint;
+            let currDist = dist3D(newNode, curr);
+            const L_max = STATE.entryPoint.maxLevel;
+            
+            highlightCode('ln-ins-p1-loop');
+            for (let lc = L_max; lc > level; lc--) {
+                updateLayerIndicator(lc); updateLayerVisuals(lc);
+                highlightCode('ln-sl-def');
+                let changed = true;
+                while (changed) {
+                    changed = false;
+                    if (curr.neighbors[lc]) {
+                        const neighbors = curr.neighbors[lc].map(id => getNode(id));
+                        highlightCode('ln-sl-loop');
+                        for (let nb of neighbors) {
+                            drawTempLine(curr, nb, lc, 0xf59e0b); 
+                            if (STATE.visited.has(`${lc}-${nb.id}`)) continue;
+                            
+                            highlightCode('ln-sl-pop');
+                            const d = dist3D(newNode, nb);
+                            if (d < currDist) {
+                                curr = nb; currDist = d; changed = true;
+                                log(`Layer ${lc}: 逼近 <span class="log-highlight">#${nb.id}</span>`);
+                                highlightNode(curr, 'active');
+                            } else {
+                                highlightNode(nb, 'visited');
+                                STATE.visited.add(`${lc}-${nb.id}`);
+                            }
+                            yield;
+                        }
+                        clearTempVisuals();
+                    }
+                }
+                log(`Layer ${lc} 局部最优 -> <span class="log-dive">下潜</span>`);
+                drawVerticalDrop(curr, lc, lc-1);
+                yield;
+            }
+
+            highlightCode('ln-ins-p2-loop');
+            for (let lc = Math.min(L_max, level); lc >= 0; lc--) {
+                updateLayerIndicator(lc); updateLayerVisuals(lc);
+                highlightCode('ln-ins-p2-search');
+                
+                let candidates = [curr];
+                let best = [{node: curr, dist: dist3D(newNode, curr)}];
+                let visited = new Set([curr.id]);
+                highlightNode(curr, 'visited');
+                updateLists(candidates.map(n => ({node: n, dist: dist3D(newNode, n)})), best);
+                
+                for(let step=0; step<2; step++) {
+                    let nextGen = [];
+                    for(let c of candidates) {
+                        if (c.neighbors[lc]) {
+                            for(let nid of c.neighbors[lc]) {
+                                let nb = getNode(nid);
+                                if(!visited.has(nb.id)) {
+                                    visited.add(nb.id);
+                                    highlightNode(nb, 'visited'); 
+                                    nextGen.push(nb);
+                                    best.push({node: nb, dist: dist3D(newNode, nb)});
+                                    drawTempLine(c, nb, lc, 0x10b981); 
+                                }
+                            }
+                        }
+                    }
+                    candidates = nextGen;
+                    updateLists(candidates.map(n => ({node: n, dist: dist3D(newNode, n)})), best);
+                    if(candidates.length > 0) yield;
+                }
+                clearTempVisuals();
+
+                highlightCode('ln-ins-p2-conn');
+                best.sort((a,b) => a.dist - b.dist);
+                const neighbors = best.slice(0, CONFIG.M).map(b => b.node);
+                
+                for(let nb of neighbors) {
+                    newNode.neighbors[lc].push(nb.id);
+                    nb.neighbors[lc].push(newNode.id);
+                    addGraphEdge(newNode, nb, lc); 
+                    drawConnectionLine(newNode, nb, lc); 
+                    highlightNode(nb, 'new-connection', lc);
+                    yield;
+                }
+                highlightNode(newNode, 'new-node'); 
+                log(`Layer ${lc}: 连接 <span class="log-success">${neighbors.length}</span> 个邻居`);
+                curr = best[0].node;
+                yield;
+            }
+
+            if (level > STATE.entryPoint.maxLevel) {
+                if (STATE.entryPoint) highlightNode(STATE.entryPoint, 'result'); 
+                STATE.entryPoint = newNode;
+                highlightCode('ln-ins-update-ep');
+                highlightNode(newNode, 'entry');
+            }
+            log("插入完成", "log-success");
+            yield 'WAIT_CONFIRM'; 
+            finishAction();
+        }
+
+        function* genSearch(targetX, targetZ) {
+             STATE.queryNode = createQueryNodeVisuals(targetX, targetZ);
+             
+             const qNode = {x: targetX, z: targetZ};
+             let curr = STATE.entryPoint;
+             let currDist = dist3D(qNode, curr);
+             
+             STATE.frontier = []; STATE.results = [];
+             STATE.visited.clear(); 
+             
+             highlightCode('ln-q-def'); log("开始分层搜索..."); yield;
+
+             const L_max = STATE.entryPoint.maxLevel;
+             
+             for (let lc = L_max; lc > 0; lc--) {
+                 updateLayerIndicator(lc); updateLayerVisuals(lc);
+                 highlightCode('ln-sl-def'); 
+                 let changed = true;
+                 while(changed) {
+                     changed = false;
+                     highlightNode(curr, 'active'); 
+                     if (curr.neighbors[lc]) {
+                         const neighbors = curr.neighbors[lc].map(id => getNode(id));
+                         for(let nb of neighbors) {
+                             drawTempLine(curr, nb, lc, 0xf59e0b);
+                             const d = dist3D(qNode, nb);
+                             if (d < currDist) {
+                                 currDist = d; curr = nb; changed = true;
+                                 log(`Layer ${lc}: 跳跃至 <span class="log-highlight">#${nb.id}</span>`);
+                                 highlightNode(curr, 'active');
+                                 highlightNode(nb, 'visited'); STATE.visited.add(nb.id);
+                                 yield; break;
+                             } else {
+                                 highlightNode(nb, 'visited'); STATE.visited.add(nb.id);
+                             }
+                             yield;
+                         }
+                     }
+                     clearTempVisuals();
+                 }
+                 log(`Layer ${lc} 局部最优 -> <span class="log-dive">下潜</span>`);
+                 drawVerticalDrop(curr, lc, lc-1);
+                 yield;
+             }
+
+             updateLayerIndicator(0); updateLayerVisuals(0);
+             highlightCode('ln-q-p2-search'); log("Layer 0: 精细搜索...");
+             
+             let frontier = [{node: curr, dist: currDist}];
+             let visited = new Set([curr.id]); STATE.visited.add(curr.id);
+             let bestCandidates = [{node: curr, dist: currDist}];
+             updateLists(frontier, bestCandidates);
+             
+             while(frontier.length > 0) {
+                 highlightCode('ln-sl-loop');
+                 frontier.sort((a,b) => a.dist - b.dist);
+                 const current = frontier.shift();
+                 highlightCode('ln-sl-pop'); highlightNode(current.node, 'active'); 
+                 
+                 if (current.node.neighbors[0]) {
+                     const neighbors = current.node.neighbors[0].map(id => getNode(id));
+                     for(let nb of neighbors) {
+                         if(!visited.has(nb.id)) {
+                             visited.add(nb.id); STATE.visited.add(nb.id);
+                             drawTempLine(current.node, nb, 0, 0x3b82f6);
+                             const d = dist3D(qNode, nb);
+                             highlightCode('ln-sl-update');
+                             frontier.push({node: nb, dist: d});
+                             bestCandidates.push({node: nb, dist: d});
+                             bestCandidates.sort((a,b) => a.dist - b.dist);
+                             if (bestCandidates.length > CONFIG.ef) bestCandidates.pop();
+                             updateLists(frontier, bestCandidates);
+                             highlightNode(nb, 'visited');
+                             yield;
+                         }
+                     }
+                 }
+                 clearTempVisuals();
+             }
+             
+             highlightCode('ln-q-return');
+             log("搜索完成", "log-success");
+             
+             // CLEAR VISITED STATE FOR FINAL RESULT
+             STATE.visited.clear(); // Clear logic
+             resetHighlights(); // Reset visuals to gray/blue
+             
+             const topK = bestCandidates.slice(0, CONFIG.k);
+             topK.forEach(r => highlightNode(r.node, 'result')); // Highlight Green
+             
+             yield 'WAIT_CONFIRM';
+            
+            queryGroup.clear();
+            STATE.queryNode = null;
+
+            resetHighlights();
+            finishAction();
+        }
+
+        // --- CONTROL LOGIC ---
+        let downPos = { x: 0, y: 0 };
+
+        function step(manual = false) {
+            if (!STATE.generator) return;
+            if (STATE.isPaused && !manual) return;
+            const res = STATE.generator.next();
+            if (res.value === 'WAIT_CONFIRM') { STATE.isPaused = true; updateUI(); return; }
+            if (res.done) finishAction();
+            else if (!STATE.isPaused) STATE.timer = setTimeout(step, STATE.stepSpeed);
+        }
+
+        function finishAction() {
+            STATE.isExecuting = false; STATE.generator = null;
+            clearTempVisuals(); connectionGroup.clear(); 
+            highlightCode(null); updateLayerIndicator("-"); updateLayerVisuals(null); updateUI();
+            STATE.activeConnections.clear();
+            
+            if (STATE.mode === 'SEARCH' && STATE.queryNode) {
+                STATE.queryNode.meshes.forEach(m => queryGroup.remove(m));
+                if(STATE.queryNode.verticalLine) queryGroup.remove(STATE.queryNode.verticalLine);
+                STATE.queryNode = null;
+                resetHighlights(); 
+            } else if (STATE.mode === 'BUILD') {
+                resetHighlights(); 
+            }
+        }
+        
+        function resetExecution() {
+            clearTimeout(STATE.timer); 
+            STATE.visited.clear();
+            STATE.activeConnections.clear();
+            finishAction(); 
+            resetHighlights();
+            if(STATE.queryNode) {
+                 STATE.queryNode.meshes.forEach(m => queryGroup.remove(m));
+                 if(STATE.queryNode.verticalLine) queryGroup.remove(STATE.queryNode.verticalLine);
+                 STATE.queryNode = null;
+            }
+            updateLayerVisuals(null);
+        }
+
+        function setMode(mode) {
+            STATE.mode = mode;
+            document.getElementById('btn-mode-build').className = mode === 'BUILD' ? "flex-1 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 transition-colors" : "flex-1 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors";
+            document.getElementById('btn-mode-search').className = mode === 'SEARCH' ? "flex-1 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 transition-colors" : "flex-1 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors";
+            document.getElementById('code-insert').classList.toggle('hidden', mode !== 'BUILD');
+            document.getElementById('code-search').classList.toggle('hidden', mode !== 'SEARCH');
+            document.getElementById('mode-instruction-text').innerText = mode === 'BUILD' ? "请在 网格区域点击 以添加新节点。" : "点击网格设定查询点。";
+            updateLists([], []); // Clear lists on mode switch
+            resetExecution(); redrawGraphEdges();
+            
+            // When switching to BUILD mode, clear any query point visuals
+            if (mode === 'BUILD') {
+                 if(STATE.queryNode) {
+                     STATE.queryNode.meshes.forEach(m => queryGroup.remove(m));
+                     if(STATE.queryNode.verticalLine) queryGroup.remove(STATE.queryNode.verticalLine);
+                     STATE.queryNode = null;
+                }
+            }
+        }
+
+        // Interaction
+        container.addEventListener('pointerdown', e => { downPos.x = e.clientX; downPos.y = e.clientY; });
+        container.addEventListener('pointerup', (event) => {
+            const dx = Math.abs(event.clientX - downPos.x); const dy = Math.abs(event.clientY - downPos.y);
+            if (dx > 5 || dy > 5) return; 
+            if (STATE.isExecuting) return;
+
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(clickPlane);
+
+            if (intersects.length > 0) {
+                const p = intersects[0].point;
+                if (Math.abs(p.x) > 110 || Math.abs(p.z) > 110) return; 
+
+                resetExecution();
+                STATE.isExecuting = true; STATE.isPaused = false; updateUI();
+                
+                if (STATE.mode === 'BUILD') {
+                    STATE.generator = genInsert(p.x, p.z);
+                    updateLists([], []); // Clear lists when starting new insert
+                    // Showfrontier lists
+                     document.getElementById('list-frontier').innerHTML = '<div class="text-xs text-slate-300 text-center mt-4 italic">Adding...</div>';
+                } else {
+                    if(!STATE.entryPoint) { log("图为空!", "text-red-500"); STATE.isExecuting = false; return; }
+                    updateLists([], []); // Clear lists when starting new search
+                    STATE.generator = genSearch(p.x, p.z);
+                }
+                step();
+            }
+        });
+
+        document.getElementById('btn-play').onclick = () => { if (STATE.isExecuting) { STATE.isPaused = !STATE.isPaused; if (!STATE.isPaused) step(); } updateUI(); };
+        document.getElementById('btn-next').onclick = () => { if (STATE.isExecuting) { STATE.isPaused = true; updateUI(); step(true); } };
+        document.getElementById('btn-mode-build').onclick = () => setMode('BUILD'); document.getElementById('btn-mode-search').onclick = () => setMode('SEARCH');
+        
+        document.getElementById('btn-reset').onclick = () => {
+            STATE.nodes = []; STATE.entryPoint = null;
+            nodeGroup.clear(); graphEdgeGroup.clear(); verticalLineGroup.clear(); tempGroup.clear(); connectionGroup.clear(); queryGroup.clear();
+            if(STATE.queryNode) STATE.queryNode = null;
+            resetExecution(); updateStats(); updateLists([], []); log("场景已清空");
+        };
+        
+        document.getElementById('btn-quick-init').onclick = () => {
+            document.getElementById('btn-reset').click();
+            log("正在生成 40 个节点...");
+            const batch = []; for(let i=0; i<40; i++) batch.push({x: (Math.random()-0.5)*180, z: (Math.random()-0.5)*180});
+            STATE.isExecuting = true;
+            const runBatch = async () => {
+                for(let p of batch) {
+                    const gen = genInsert(p.x, p.z);
+                    let res = gen.next();
+                    while(!res.done) res = gen.next();
+                }
+                STATE.isExecuting = false;
+                resetHighlights(); // Ensure clean slate
+                log("初始化完成", "log-success");
+                updateUI();
+            };
+            runBatch();
+        };
+
+        document.getElementById('btn-reset-view').onclick = resetView;
+
+        // UI & Updates
+        function highlightCode(id) { document.querySelectorAll('.code-active').forEach(el => el.classList.remove('code-active')); if (id) { const el = document.getElementById(id); if (el) { el.classList.add('code-active'); el.scrollIntoView({block: "nearest", behavior: "smooth"}); } } }
+        function updateLayerIndicator(l) { document.getElementById('layer-indicator').innerText = l === "-" ? "Layer: -" : `Layer: ${l}`; }
+        function updateStats() { document.getElementById('status-nodes').innerText = `Nodes: ${STATE.nodes.length}`; document.getElementById('status-maxlayer').innerText = `Max Layer: ${STATE.entryPoint ? STATE.entryPoint.maxLevel : 0}`; }
+        function log(msg, cls="") { const c=document.getElementById('log-container'); const d=document.createElement('div'); d.className = cls; d.innerHTML = `> ${msg}`; c.appendChild(d); c.scrollTop=c.scrollHeight; }
+        function updateLists(frontier, results) {
+            const fEl = document.getElementById('list-frontier'); const rEl = document.getElementById('list-results');
+            if(frontier) fEl.innerHTML = frontier.map(f => `<div class="flex justify-between text-[10px] text-amber-600 border-b border-slate-100"><span>#${f.node.id}</span><span class="font-mono">${f.dist.toFixed(1)}</span></div>`).join('');
+            if(results) rEl.innerHTML = results.map(r => `<div class="flex justify-between text-[10px] text-emerald-600 border-b border-slate-100 font-bold"><span>#${r.node.id}</span><span class="font-mono">${r.dist.toFixed(1)}</span></div>`).join('');
+        }
+        function updateUI() {
+            const btnPlay = document.getElementById('btn-play'); const btnNext = document.getElementById('btn-next');
+            if(STATE.isExecuting) {
+                btnNext.disabled = false;
+                btnPlay.innerHTML = STATE.isPaused ? `<i data-lucide="play" class="w-4 h-4 fill-current"></i> <span>继续</span>` : `<i data-lucide="pause" class="w-4 h-4 fill-current"></i> <span>暂停</span>`;
+                btnPlay.className = STATE.isPaused ? "flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded font-bold text-sm transition-colors shadow-lg" : "flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded font-bold text-sm transition-colors shadow-lg";
+            } else {
+                btnNext.disabled = true;
+                btnPlay.innerHTML = `<i data-lucide="play" class="w-4 h-4 fill-current"></i> <span>自动执行</span>`;
+                btnPlay.className = "flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold text-sm transition-colors shadow-lg disabled:opacity-50";
+            }
+            lucide.createIcons();
+        }
+
+        function updateLayerLabelPositions() {
+            const containerRect = container.getBoundingClientRect();
+            const labels = document.querySelectorAll('.layer-label');
+            labels.forEach(label => {
+                const i = parseInt(label.dataset.layerIndex);
+                const vec = new THREE.Vector3(-120, i * LAYER_Y_GAP, -120);
+                vec.project(camera);
+                const x = (vec.x * .5 + .5) * containerRect.width;
+                const y = (-(vec.y * .5) + .5) * containerRect.height;
+                if (vec.z < 1) { label.style.display = 'block'; label.style.left = `${x}px`; label.style.top = `${y}px`; } else { label.style.display = 'none'; }
+            });
+        }
+
+        function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); controls.update(); updateLayerLabelPositions(); }
+        animate();
+        lucide.createIcons();
+        initResizers();
+        window.addEventListener('resize', () => { camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(container.clientWidth, container.clientHeight); });
+        setTimeout(() => document.getElementById('loading').remove(), 500);
+    </script>
+</body>
+</html>
