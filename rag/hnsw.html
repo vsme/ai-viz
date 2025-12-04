@@ -56,10 +56,12 @@
             font-weight: bold;
             color: #64748b;
             border: 1px solid #e2e8f0;
-            pointer-events: none;
-            transition: top 0.1s, opacity 0.2s;
+            pointer-events: auto;
+            cursor: pointer;
+            transition: top 0.1s, opacity 0.2s, background-color 0.2s;
             transform: translateY(-50%);
         }
+        .layer-label:hover { background: #f1f5f9; color: #334155; }
         .layer-label.active { background: #eff6ff; border-color: #bfdbfe; color: #2563eb; }
         .layer-label.inactive { opacity: 0.5; }
 
@@ -274,9 +276,11 @@
         scene.background = new THREE.Color(0xffffff); 
 
         const container = document.getElementById('canvas-container');
-        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 2000);
-        camera.position.set(0, 160, 250); 
-
+        const viewSize = 600;
+        const aspect = container.clientWidth / container.clientHeight;
+        const camera = new THREE.OrthographicCamera(-viewSize * aspect / 2, viewSize * aspect / 2, viewSize / 2, -viewSize / 2, -5000, 5000);
+        camera.position.set(200, 150, 200); // Isometric-ish view
+        
         const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
         renderer.setSize(container.clientWidth, container.clientHeight);
         renderer.shadowMap.enabled = true;
@@ -293,15 +297,15 @@
         // Function to reset view
         function resetView() {
             controls.reset();
-            // Adjust camera to fit all layers with padding
+            camera.zoom = 1;
+            camera.updateProjectionMatrix();
+            
             const maxLayerY = (LAYERS - 1) * LAYER_Y_GAP;
-            const centerX = 0;
-            const centerZ = 0;
             const centerY = maxLayerY / 2;
 
-            // Position camera further back and up to see everything
-            camera.position.set(0, centerY + 200, 350); 
-            controls.target.set(centerX, centerY, centerZ);
+            // Position for Orthographic - Isometric Front-Left
+            camera.position.set(200, centerY + 100, 200); 
+            controls.target.set(0, centerY, 0);
             controls.update();
         }
 
@@ -355,7 +359,10 @@
             layerObjects: [], 
             activeHighlights: [], 
             activeConnections: new Set(),
-            queryNode: null // Object holding query visual meshes
+            queryNode: null, // Object holding query visual meshes
+            currentLayerEntry: null, // Track entry point for current layer to keep it purple
+            canSwitchLayer: false, // Only allow layer switching after completion
+            activeLayerIndex: null // Track currently active layer index
         };
 
         let CONFIG = { M: 3, ef: 5, k: 3, levelMult: 1.0 };
@@ -383,7 +390,14 @@
                     e.preventDefault();
                     if (isLeftResizer) { const newW = Math.max(300, Math.min(800, e.clientX)); leftEl.style.width = `${newW}px`; } 
                     else { const newW = Math.max(280, Math.min(600, window.innerWidth - e.clientX)); rightEl.style.width = `${newW}px`; }
-                    camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(container.clientWidth, container.clientHeight);
+                    
+                    const aspect = container.clientWidth / container.clientHeight;
+                    camera.left = -viewSize * aspect / 2;
+                    camera.right = viewSize * aspect / 2;
+                    camera.top = viewSize / 2;
+                    camera.bottom = -viewSize / 2;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(container.clientWidth, container.clientHeight);
                 });
                 window.addEventListener('mouseup', () => { isResizing = false; document.body.style.cursor = ''; resizer.classList.remove('bg-blue-500'); });
             };
@@ -500,6 +514,26 @@
                 label.className = 'layer-label shadow-sm';
                 label.innerText = `Layer ${i}`;
                 label.dataset.layerIndex = i;
+                
+                label.onclick = (e) => {
+                    e.stopPropagation();
+                    if (STATE.canSwitchLayer && !STATE.isExecuting) {
+                        // Toggle logic: if clicking current active layer, reset to show all (null)
+                        if (STATE.activeLayerIndex === i) {
+                            updateLayerVisuals(null);
+                        } else {
+                            updateLayerVisuals(i);
+                        }
+                    } else if (STATE.canSwitchLayer && STATE.isExecuting && STATE.isWaitingConfirm) {
+                         // Allow switching in wait confirm state too
+                        if (STATE.activeLayerIndex === i) {
+                            updateLayerVisuals(null);
+                        } else {
+                            updateLayerVisuals(i);
+                        }
+                    }
+                };
+
                 labelContainer.appendChild(label);
 
                 STATE.layerObjects[i] = { grid, border, fill: fillMesh, label };
@@ -508,6 +542,7 @@
         initLayers();
 
         function updateLayerVisuals(activeLayer) {
+            STATE.activeLayerIndex = activeLayer;
             STATE.layerObjects.forEach((obj, i) => {
                 const isFocused = (activeLayer === null) || (i === activeLayer);
                 obj.grid.material.opacity = isFocused ? 0.3 : 0.05;
@@ -777,6 +812,16 @@
                         applyType = 'new-connection';
                     }
 
+                    // Priority: Global Entry Point (Topmost Layer Only) - Always Purple
+                    if (STATE.entryPoint && node === STATE.entryPoint && lvl === node.maxLevel) {
+                        applyType = 'entry';
+                    }
+                    // Priority: If node is current layer entry (legacy/specific), keep it Entry Purple
+                    else if ((type === 'visited' || type === 'active') && node === STATE.currentLayerEntry && lvl === (specificLayer !== null ? specificLayer : lvl)) {
+                        // Check if we are in the layer where this node is entry
+                        applyType = 'entry';
+                    }
+
                     // If setting new-connection, enforce layer restriction
                     if (applyType === 'new-connection') {
                         if (isSpecific && lvl !== specificLayer) return; // Skip other layers
@@ -814,9 +859,12 @@
                 
                 const isVisited = STATE.visited.has(node.id);
                 const isEntry = node === STATE.entryPoint;
-                const baseColor = isEntry ? COLORS.NODE_ENTRY : (isVisited ? COLORS.NODE_VISITED : COLORS.NODE_DEFAULT);
                 
-                node.meshes.forEach(m => {
+                node.meshes.forEach((m, lvl) => {
+                    let baseColor = COLORS.NODE_DEFAULT;
+                    if (isEntry && lvl === node.maxLevel) baseColor = COLORS.NODE_ENTRY;
+                    else if (isVisited) baseColor = COLORS.NODE_VISITED;
+
                     m.material.color.setHex(baseColor);
                     m.scale.set(1,1,1);
                     m.material.opacity = 1.0;
@@ -972,6 +1020,9 @@
              const L_max = STATE.entryPoint.maxLevel;
              
              for (let lc = L_max; lc > 0; lc--) {
+                 // Only highlight active node, don't force 'entry' purple on lower layers
+                 highlightNode(curr, 'active', lc); 
+
                  updateLayerIndicator(lc); updateLayerVisuals(lc);
                  highlightCode('ln-sl-def'); 
                  let changed = true;
@@ -1005,6 +1056,8 @@
              updateLayerIndicator(0); updateLayerVisuals(0);
              highlightCode('ln-q-p2-search'); log("Layer 0: 精细搜索...");
              
+             highlightNode(curr, 'active', 0);
+
              let frontier = [{node: curr, dist: currDist}];
              let visited = new Set([curr.id]); STATE.visited.add(curr.id);
              let bestCandidates = [{node: curr, dist: currDist}];
@@ -1063,13 +1116,21 @@
             if (!STATE.generator) return;
             if (STATE.isPaused && !manual) return;
             const res = STATE.generator.next();
-            if (res.value === 'WAIT_CONFIRM') { STATE.isPaused = true; updateUI(); return; }
+            if (res.value === 'WAIT_CONFIRM') { 
+                STATE.isPaused = true; 
+                STATE.isWaitingConfirm = true;
+                STATE.canSwitchLayer = true; // Enable layer switching at wait confirm
+                updateUI(); 
+                return; 
+            }
             if (res.done) finishAction();
             else if (!STATE.isPaused) STATE.timer = setTimeout(step, STATE.stepSpeed);
         }
 
         function finishAction() {
             STATE.isExecuting = false; STATE.generator = null;
+            STATE.isWaitingConfirm = false;
+            STATE.canSwitchLayer = true; // Enable layer switching
             clearTempVisuals(); connectionGroup.clear(); 
             highlightCode(null); updateLayerIndicator("-"); updateLayerVisuals(null); updateUI();
             STATE.activeConnections.clear();
@@ -1088,6 +1149,8 @@
             clearTimeout(STATE.timer); 
             STATE.visited.clear();
             STATE.activeConnections.clear();
+            STATE.currentLayerEntry = null;
+            STATE.canSwitchLayer = false;
             finishAction(); 
             resetHighlights();
             if(STATE.queryNode) {
@@ -1123,7 +1186,12 @@
         container.addEventListener('pointerup', (event) => {
             const dx = Math.abs(event.clientX - downPos.x); const dy = Math.abs(event.clientY - downPos.y);
             if (dx > 5 || dy > 5) return; 
-            if (STATE.isExecuting) return;
+            if (STATE.isExecuting) {
+                if (STATE.isWaitingConfirm) {
+                    step(true);
+                }
+                return;
+            }
 
             const rect = renderer.domElement.getBoundingClientRect();
             mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -1213,11 +1281,24 @@
             const labels = document.querySelectorAll('.layer-label');
             labels.forEach(label => {
                 const i = parseInt(label.dataset.layerIndex);
-                const vec = new THREE.Vector3(-120, i * LAYER_Y_GAP, -120);
+                // Project the CENTER of the layer (0,0,0) in XZ
+                const vec = new THREE.Vector3(0, i * LAYER_Y_GAP, 0);
                 vec.project(camera);
+                
                 const x = (vec.x * .5 + .5) * containerRect.width;
                 const y = (-(vec.y * .5) + .5) * containerRect.height;
-                if (vec.z < 1) { label.style.display = 'block'; label.style.left = `${x}px`; label.style.top = `${y}px`; } else { label.style.display = 'none'; }
+                
+                // Offset to the left in screen space
+                // Since layers are roughly 200 units wide, and viewSize is 600,
+                // The projected width of a layer is roughly 1/3 of screen width?
+                // Let's put it 120px to the left of center.
+                if (vec.z < 1) { 
+                    label.style.display = 'block'; 
+                    label.style.left = `${x - 160}px`; 
+                    label.style.top = `${y}px`; 
+                } else { 
+                    label.style.display = 'none'; 
+                }
             });
         }
 
@@ -1225,7 +1306,15 @@
         animate();
         lucide.createIcons();
         initResizers();
-        window.addEventListener('resize', () => { camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(container.clientWidth, container.clientHeight); });
+        window.addEventListener('resize', () => { 
+            const aspect = container.clientWidth / container.clientHeight;
+            camera.left = -viewSize * aspect / 2;
+            camera.right = viewSize * aspect / 2;
+            camera.top = viewSize / 2;
+            camera.bottom = -viewSize / 2;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight); 
+        });
         setTimeout(() => document.getElementById('loading').remove(), 500);
     </script>
 </body>
